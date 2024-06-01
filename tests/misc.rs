@@ -902,7 +902,7 @@ x a b='B	' c='C':
   echo {{a}} {{b}} {{c}}
 
 # something else
-this-recipe-is-very-very-very-important Z="\t z":
+this-recipe-is-very-very-very-very-very-very-very-very-important Z="\t z":
 
 # this recipe will not appear
 _private-recipe:
@@ -911,7 +911,7 @@ _private-recipe:
   stdout:   r#"
     Available recipes:
         hello a b='B	' c='C' # this does a thing
-        this-recipe-is-very-very-very-important Z="\t z" # something else
+        this-recipe-is-very-very-very-very-very-very-very-very-important Z="\t z" # something else
         x a b='B	' c='C'     # this does another thing
   "#,
 }
@@ -1587,84 +1587,6 @@ echo:
    args:     ("echo"),
    stdout:   "1\n",
    stderr:   "echo 1\n",
-}
-
-test! {
-   name:     dotenv_variable_in_recipe,
-   justfile: "
-#
-set dotenv-load
-
-echo:
-  echo $DOTENV_KEY
- ",
-   stdout:   "dotenv-value\n",
-   stderr:   "echo $DOTENV_KEY\n",
-}
-
-test! {
-   name:     dotenv_variable_in_backtick,
-   justfile: "
-#
-set dotenv-load
-X:=`echo $DOTENV_KEY`
-echo:
-  echo {{X}}
- ",
-   stdout:   "dotenv-value\n",
-   stderr:   "echo dotenv-value\n",
-}
-test! {
-   name:     dotenv_variable_in_function_in_recipe,
-   justfile: "
-#
-set dotenv-load
-echo:
-  echo {{env_var_or_default('DOTENV_KEY', 'foo')}}
-  echo {{env_var('DOTENV_KEY')}}
- ",
-   stdout:   "dotenv-value\ndotenv-value\n",
-   stderr:   "echo dotenv-value\necho dotenv-value\n",
-}
-
-test! {
-   name:     dotenv_variable_in_function_in_backtick,
-   justfile: "
-#
-set dotenv-load
-X:=env_var_or_default('DOTENV_KEY', 'foo')
-Y:=env_var('DOTENV_KEY')
-echo:
-  echo {{X}}
-  echo {{Y}}
- ",
-   stdout:   "dotenv-value\ndotenv-value\n",
-   stderr:   "echo dotenv-value\necho dotenv-value\n",
-}
-
-test! {
-   name:     no_dotenv,
-   justfile: "
-#
-X:=env_var_or_default('DOTENV_KEY', 'DEFAULT')
-echo:
-  echo {{X}}
- ",
-   args:     ("--no-dotenv"),
-   stdout:   "DEFAULT\n",
-   stderr:   "echo DEFAULT\n",
-}
-
-test! {
-   name:     dotenv_env_var_override,
-   justfile: "
-#
-echo:
-  echo $DOTENV_KEY
- ",
-   env:      {"DOTENV_KEY": "not-the-dotenv-value",},
-   stdout:   "not-the-dotenv-value\n",
-   stderr:   "echo $DOTENV_KEY\n",
 }
 
 test! {

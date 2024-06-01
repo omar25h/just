@@ -39,14 +39,11 @@ build:
 fmt:
   cargo fmt --all
 
+shellcheck:
+  shellcheck www/install.sh
+
 man:
-  cargo build --features help4help2man
-  help2man \
-    --name 'save and run commands' \
-    --manual 'Just Manual' \
-    --no-info \
-    target/debug/just \
-    > man/just.1
+  cargo run -- --man > man/just.1
 
 view-man: man
   man man/just.1
@@ -112,10 +109,6 @@ install-dev-deps:
   cargo install cargo-watch
   cargo install mdbook mdbook-linkcheck
 
-# install system development dependencies with homebrew
-install-dev-deps-homebrew:
-  brew install help2man
-
 # everyone's favorite animate paper clip
 clippy:
   cargo clippy --all --all-targets --all-features
@@ -171,8 +164,8 @@ watch-readme:
   just render-readme
   fswatch -ro README.adoc | xargs -n1 -I{} just render-readme
 
-generate-completions:
-  ./bin/generate-completions
+update-completions:
+  ./bin/update-completions
 
 test-completions:
   ./tests/completions/just.bash
@@ -212,6 +205,11 @@ _sh:
   #!/usr/bin/env sh
   hello='Yo'
   echo "$hello from a shell script!"
+
+_nu:
+  #!/usr/bin/env nu
+  let hellos = ["Greetings", "Yo", "Howdy"]
+  $hellos | each {|el| print $"($el) from a nushell script!" }
 
 _ruby:
   #!/usr/bin/env ruby

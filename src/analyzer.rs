@@ -13,8 +13,9 @@ impl<'src> Analyzer<'src> {
     paths: &HashMap<PathBuf, PathBuf>,
     asts: &HashMap<PathBuf, Ast<'src>>,
     root: &Path,
+    name: Option<Name<'src>>,
   ) -> CompileResult<'src, Justfile<'src>> {
-    Analyzer::default().justfile(loaded, paths, asts, root)
+    Self::default().justfile(loaded, paths, asts, root, name)
   }
 
   fn justfile(
@@ -23,15 +24,18 @@ impl<'src> Analyzer<'src> {
     paths: &HashMap<PathBuf, PathBuf>,
     asts: &HashMap<PathBuf, Ast<'src>>,
     root: &Path,
+    name: Option<Name<'src>>,
   ) -> CompileResult<'src, Justfile<'src>> {
     let mut recipes = Vec::new();
+
+    let mut assignments = Vec::new();
 
     let mut stack = Vec::new();
     stack.push(asts.get(root).unwrap());
 
     let mut warnings = Vec::new();
 
-    let mut modules: BTreeMap<String, (Name, Justfile)> = BTreeMap::new();
+    let mut modules: Table<Justfile> = Table::new();
 
     let mut definitions: HashMap<&str, (&'static str, Name)> = HashMap::new();
 
@@ -70,8 +74,7 @@ impl<'src> Analyzer<'src> {
             self.aliases.insert(alias.clone());
           }
           Item::Assignment(assignment) => {
-            self.analyze_assignment(assignment)?;
-            self.assignments.insert(assignment.clone());
+            assignments.push(assignment);
           }
           Item::Comment(_) => (),
           Item::Import { absolute, .. } => {
@@ -82,10 +85,7 @@ impl<'src> Analyzer<'src> {
           Item::Module { absolute, name, .. } => {
             if let Some(absolute) = absolute {
               define(*name, "module", false)?;
-              modules.insert(
-                name.lexeme().into(),
-                (*name, Self::analyze(loaded, paths, asts, absolute)?),
-              );
+              modules.insert(Self::analyze(loaded, paths, asts, absolute, Some(*name))?);
             }
           }
           Item::Recipe(recipe) => {
@@ -108,13 +108,31 @@ impl<'src> Analyzer<'src> {
 
     let mut recipe_table: Table<'src, UnresolvedRecipe<'src>> = Table::default();
 
+    for assignment in assignments {
+      if !settings.allow_duplicate_variables
+        && self.assignments.contains_key(assignment.name.lexeme())
+      {
+        return Err(assignment.name.token.error(DuplicateVariable {
+          variable: assignment.name.lexeme(),
+        }));
+      }
+
+      if self
+        .assignments
+        .get(assignment.name.lexeme())
+        .map_or(true, |original| assignment.depth <= original.depth)
+      {
+        self.assignments.insert(assignment.clone());
+      }
+    }
+
     AssignmentResolver::resolve_assignments(&self.assignments)?;
 
     for recipe in recipes {
       define(recipe.name, "recipe", settings.allow_duplicate_recipes)?;
       if recipe_table
         .get(recipe.name.lexeme())
-        .map_or(true, |original| recipe.depth <= original.depth)
+        .map_or(true, |original| recipe.file_depth <= original.file_depth)
       {
         recipe_table.insert(recipe.clone());
       }
@@ -130,6 +148,8 @@ impl<'src> Analyzer<'src> {
     let root = paths.get(root).unwrap();
 
     Ok(Justfile {
+      aliases,
+      assignments: self.assignments,
       default: recipes
         .values()
         .filter(|recipe| recipe.name.path == root)
@@ -141,16 +161,13 @@ impl<'src> Analyzer<'src> {
             Rc::clone(next)
           }),
         }),
-      aliases,
-      assignments: self.assignments,
       loaded: loaded.into(),
+      modules,
+      name,
       recipes,
       settings,
+      source: root.into(),
       warnings,
-      modules: modules
-        .into_iter()
-        .map(|(name, (_name, justfile))| (name, justfile))
-        .collect(),
     })
   }
 
@@ -196,15 +213,6 @@ impl<'src> Analyzer<'src> {
       continued = line.is_continuation();
     }
 
-    Ok(())
-  }
-
-  fn analyze_assignment(&self, assignment: &Assignment<'src>) -> CompileResult<'src> {
-    if self.assignments.contains_key(assignment.name.lexeme()) {
-      return Err(assignment.name.token.error(DuplicateVariable {
-        variable: assignment.name.lexeme(),
-      }));
-    }
     Ok(())
   }
 

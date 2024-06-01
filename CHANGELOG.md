@@ -1,6 +1,128 @@
 Changelog
 =========
 
+[1.27.0](https://github.com/casey/just/releases/tag/1.27.0) - 2024-05-25
+------------------------------------------------------------------------
+
+### Changed
+- Use cache dir for temporary files ([#2067](https://github.com/casey/just/pull/2067))
+
+### Added
+- Add `[doc]` attribute to set and suppress documentation comments ([#2050](https://github.com/casey/just/pull/2050) by [neunenak](https://github.com/neunenak))
+- Add source_file() and source_directory() functions ([#2088](https://github.com/casey/just/pull/2088))
+- Add recipe groups ([#1842](https://github.com/casey/just/pull/1842) by [neunenak](https://github.com/neunenak))
+- Add shell() function for running external commands ([#2047](https://github.com/casey/just/pull/2047) by [gyreas](https://github.com/gyreas))
+- Add `--global-justfile` flag ([#1846](https://github.com/casey/just/pull/1846) by [neunenak](https://github.com/neunenak))
+- Add shell-expanded strings ([#2055](https://github.com/casey/just/pull/2055))
+- Add `encode_uri_component` function ([#2052](https://github.com/casey/just/pull/2052) by [laniakea64](https://github.com/laniakea64))
+- Add `choose` function for generating random strings ([#2049](https://github.com/casey/just/pull/2049) by [laniakea64](https://github.com/laniakea64))
+- Add predefined constants ([#2054](https://github.com/casey/just/pull/2054))
+- Allow setting some command-line options with environment variables ([#2044](https://github.com/casey/just/pull/2044) by [neunenak](https://github.com/neunenak))
+- Add prepend() function ([#2045](https://github.com/casey/just/pull/2045) by [gyreas](https://github.com/gyreas))
+- Add append() function ([#2046](https://github.com/casey/just/pull/2046) by [gyreas](https://github.com/gyreas))
+- Add --man subcommand ([#2041](https://github.com/casey/just/pull/2041))
+- Make `dotenv-path` relative to working directory ([#2040](https://github.com/casey/just/pull/2040))
+- Add `assert` expression ([#1845](https://github.com/casey/just/pull/1845) by [de1iza](https://github.com/de1iza))
+- Add 'allow-duplicate-variables' setting ([#1922](https://github.com/casey/just/pull/1922) by [Mijago](https://github.com/Mijago))
+
+### Fixed
+- List modules in source order with `--unsorted` ([#2085](https://github.com/casey/just/pull/2085))
+- Show submodule recipes in --choose ([#2069](https://github.com/casey/just/pull/2069))
+- Allow multiple imports of the same file in different modules ([#2065](https://github.com/casey/just/pull/2065))
+- Fix submodule recipe listing indentation ([#2063](https://github.com/casey/just/pull/2063))
+- Pass command as first argument to `shell` ([#2061](https://github.com/casey/just/pull/2061))
+- Allow shell expanded strings in mod and import paths ([#2059](https://github.com/casey/just/pull/2059))
+- Run imported recipes in root justfile with correct working directory ([#2056](https://github.com/casey/just/pull/2056))
+- Fix output `\r\n` stripping ([#2035](https://github.com/casey/just/pull/2035))
+
+### Misc
+- Forbid whitespace in shell-expanded string prefixes ([#2083](https://github.com/casey/just/pull/2083))
+- Add Debian and Ubuntu install instructions to readme ([#2072](https://github.com/casey/just/pull/2072))
+- Remove snap installation instructions from readme ([#2070](https://github.com/casey/just/pull/2070))
+- Fallback to wget in install script if curl isn't available([#1913](https://github.com/casey/just/pull/1913) by [tgross35](https://github.com/tgross35))
+- Use std::io::IsTerminal instead of atty crate ([#2066](https://github.com/casey/just/pull/2066))
+- Improve `shell()` documentation ([#2060](https://github.com/casey/just/pull/2060) by [laniakea64](https://github.com/laniakea64))
+- Add bash completion for snap ([#2058](https://github.com/casey/just/pull/2058) by [albertodonato](https://github.com/albertodonato))
+- Refactor list subcommand ([#2062](https://github.com/casey/just/pull/2062))
+- Document working directory ([#2053](https://github.com/casey/just/pull/2053))
+- Replace FunctionContext with Evaluator ([#2048](https://github.com/casey/just/pull/2048))
+- Update clap to version 4 ([#1924](https://github.com/casey/just/pull/1924) by [poliorcetics](https://github.com/poliorcetics))
+- Cleanup ([#2026](https://github.com/casey/just/pull/2026) by [adamnemecek](https://github.com/adamnemecek))
+- Increase --list maximum alignable width from 30 to 50 ([#2039](https://github.com/casey/just/pull/2039))
+- Document using `env -S` ([#2038](https://github.com/casey/just/pull/2038))
+- Update line continuation documentation ([#1998](https://github.com/casey/just/pull/1998) by [laniakea64](https://github.com/laniakea64))
+- Add example using GNU parallel to run tasks in concurrently ([#1915](https://github.com/casey/just/pull/1915) by [amarao](https://github.com/amarao))
+- Placate clippy: use `clone_into` ([#2037](https://github.com/casey/just/pull/2037))
+- Use --command-color when printing shebang recipe commands ([#1911](https://github.com/casey/just/pull/1911) by [avi-cenna](https://github.com/avi-cenna))
+- Document how to use watchexec to re-run recipes when files change ([#2036](https://github.com/casey/just/pull/2036))
+- Update VS Code extensions in readme ([#2034](https://github.com/casey/just/pull/2034))
+- Add rust:just repology package table to readme ([#2032](https://github.com/casey/just/pull/2032))
+
+[1.26.0](https://github.com/casey/just/releases/tag/1.26.0) - 2024-05-13
+------------------------------------------------------------------------
+
+### Added
+- Add --no-aliases to hide aliases in --list ([#1961](https://github.com/casey/just/pull/1961) by [WJehee](https://github.com/WJehee))
+- Add -E as alias for --dotenv-path ([#1910](https://github.com/casey/just/pull/1910) by [amarao](https://github.com/amarao))
+
+### Misc
+- Update softprops/action-gh-release ([#2029](https://github.com/casey/just/pull/2029) by [app/dependabot](https://github.com/app/dependabot))
+- Update dependencies ([#1999](https://github.com/casey/just/pull/1999) by [neunenak](https://github.com/neunenak))
+- Bump peaceiris/actions-gh-pages to version 4 ([#2005](https://github.com/casey/just/pull/2005) by [app/dependabot](https://github.com/app/dependabot))
+- Clarify that janus operates on public justfiles only ([#2021](https://github.com/casey/just/pull/2021))
+- Fix Error::TmpdirIo error message ([#1987](https://github.com/casey/just/pull/1987))
+- Update softprops/action-gh-release ([#1973](https://github.com/casey/just/pull/1973) by [app/dependabot](https://github.com/app/dependabot))
+- Rename `delete` example recipe to `delete-all` ([#1966](https://github.com/casey/just/pull/1966) by [aarmn](https://github.com/aarmn))
+- Update softprops/action-gh-release ([#1954](https://github.com/casey/just/pull/1954) by [app/dependabot](https://github.com/app/dependabot))
+- Fix function name typo ([#1953](https://github.com/casey/just/pull/1953) by [racerole](https://github.com/racerole))
+
+[1.25.2](https://github.com/casey/just/releases/tag/1.25.2) - 2024-03-10
+------------------------------------------------------------------------
+
+- Unpin ctrlc ([#1951](https://github.com/casey/just/pull/1951))
+
+[1.25.1](https://github.com/casey/just/releases/tag/1.25.1) - 2024-03-09
+------------------------------------------------------------------------
+
+### Misc
+- Pin ctrlc to version 3.1.1 ([#1945](https://github.com/casey/just/pull/1945))
+- Fix AArch64 release build error ([#1942](https://github.com/casey/just/pull/1942))
+
+[1.25.0](https://github.com/casey/just/releases/tag/1.25.0) - 2024-03-07
+------------------------------------------------------------------------
+
+### Added
+- Add `blake3` and `blake3_file` functions ([#1860](https://github.com/casey/just/pull/1860) by [tgross35](https://github.com/tgross35))
+
+### Misc
+- Fix readme typo ([#1936](https://github.com/casey/just/pull/1936) by [Justintime50](https://github.com/Justintime50))
+- Use unwrap_or_default ([#1928](https://github.com/casey/just/pull/1928))
+- Set codegen-units to 1 reduce release binary size ([#1920](https://github.com/casey/just/pull/1920) by [amarao](https://github.com/amarao))
+- Document openSUSE package ([#1918](https://github.com/casey/just/pull/1918) by [sfalken](https://github.com/sfalken))
+- Fix install.sh shellcheck warnings ([#1912](https://github.com/casey/just/pull/1912) by [tgross35](https://github.com/tgross35))
+
+[1.24.0](https://github.com/casey/just/releases/tag/1.24.0) - 2024-02-11
+------------------------------------------------------------------------
+
+### Added
+- Support recipe paths containing `::` in Bash completion script ([#1863](https://github.com/casey/just/pull/1863) by [crdx](https://github.com/crdx))
+- Add function to canonicalize paths ([#1859](https://github.com/casey/just/pull/1859))
+
+### Misc
+- Document installing just on Github Actions in readme ([#1867](https://github.com/casey/just/pull/1867) by [cclauss](https://github.com/cclauss))
+- Use unlikely-to-be-set variable name in env tests ([#1882](https://github.com/casey/just/pull/1882))
+- Skip write_error test if running as root ([#1881](https://github.com/casey/just/pull/1881))
+- Convert run_shebang into integration test ([#1880](https://github.com/casey/just/pull/1880))
+- Install mdbook with cargo in CI workflow ([#1877](https://github.com/casey/just/pull/1877))
+- Remove deprecated actions-rs/toolchain ([#1874](https://github.com/casey/just/pull/1874) by [cclauss](https://github.com/cclauss))
+- Fix Gentoo package link ([#1875](https://github.com/casey/just/pull/1875) by [vozbu](https://github.com/vozbu))
+- Fix typos found by codespell ([#1872](https://github.com/casey/just/pull/1872) by [cclauss](https://github.com/cclauss))
+- Replace deprecated set-output command in Github Actions workflows ([#1869](https://github.com/casey/just/pull/1869) by [cclauss](https://github.com/cclauss))
+- Update `actions/checkout` and `softprops/action-gh-release` ([#1871](https://github.com/casey/just/pull/1871) by [app/dependabot](https://github.com/app/dependabot))
+- Keep GitHub Actions up to date with Dependabot ([#1868](https://github.com/casey/just/pull/1868) by [cclauss](https://github.com/cclauss))
+- Add contrib directory ([#1870](https://github.com/casey/just/pull/1870))
+- Fix install script ([#1844](https://github.com/casey/just/pull/1844))
+
 [1.23.0](https://github.com/casey/just/releases/tag/1.23.0) - 2024-01-12
 ------------------------------------------------------------------------
 
@@ -227,7 +349,7 @@ Changelog
 - Note that install.sh may fail on GitHub actions ([#1499](https://github.com/casey/just/pull/1499))
 - Fix readme typo ([#1489](https://github.com/casey/just/pull/1489) by [auberisky](https://github.com/auberisky))
 - Update install script and readmes to use tls v1.3 ([#1481](https://github.com/casey/just/pull/1481))
-- Renable install.sh test on CI([#1478](https://github.com/casey/just/pull/1478))
+- Re-enable install.sh test on CI([#1478](https://github.com/casey/just/pull/1478))
 - Don't test install.sh on CI ([#1477](https://github.com/casey/just/pull/1477))
 - Update Chinese translation of readme ([#1476](https://github.com/casey/just/pull/1476) by [hustcer](https://github.com/hustcer))
 - Fix install.sh for Windows ([#1474](https://github.com/casey/just/pull/1474) by [bloodearnest](https://github.com/bloodearnest))

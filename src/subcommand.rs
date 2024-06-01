@@ -1,4 +1,9 @@
-use super::*;
+use {
+  super::*,
+  clap_mangen::Man,
+  std::io::{Read, Seek},
+  tempfile::tempfile,
+};
 
 const INIT_JUSTFILE: &str = "default:\n    echo 'Hello, world!'\n";
 
@@ -15,7 +20,7 @@ pub(crate) enum Subcommand {
     overrides: BTreeMap<String, String>,
   },
   Completions {
-    shell: String,
+    shell: clap_complete::Shell,
   },
   Dump,
   Edit,
@@ -24,14 +29,18 @@ pub(crate) enum Subcommand {
     variable: Option<String>,
   },
   Format,
+  Groups,
   Init,
-  List,
+  List {
+    path: ModulePath,
+  },
+  Man,
   Run {
     arguments: Vec<String>,
     overrides: BTreeMap<String, String>,
   },
   Show {
-    name: String,
+    path: ModulePath,
   },
   Summary,
   Variables,
@@ -50,8 +59,9 @@ impl Subcommand {
         Self::changelog();
         return Ok(());
       }
-      Completions { shell } => return Self::completions(shell),
+      Completions { shell } => return Self::completions(*shell),
       Init => return Self::init(config),
+      Man => return Self::man(),
       Run {
         arguments,
         overrides,
@@ -79,14 +89,22 @@ impl Subcommand {
       }
       Dump => Self::dump(config, ast, justfile)?,
       Format => Self::format(config, &search, src, ast)?,
-      List => Self::list(config, 0, justfile),
-      Show { ref name } => Self::show(config, name, justfile)?,
+      Groups => Self::groups(config, justfile),
+      List { path } => Self::list(config, justfile, path)?,
+      Show { path } => Self::show(config, justfile, path)?,
       Summary => Self::summary(config, justfile),
       Variables => Self::variables(justfile),
-      Changelog | Completions { .. } | Edit | Init | Run { .. } => unreachable!(),
+      Changelog | Completions { .. } | Edit | Init | Man | Run { .. } => unreachable!(),
     }
 
     Ok(())
+  }
+
+  fn groups(config: &Config, justfile: &Justfile) {
+    println!("Recipe groups:");
+    for group in justfile.public_groups() {
+      println!("{}{group}", config.list_prefix);
+    }
   }
 
   fn run<'src>(
@@ -202,21 +220,23 @@ impl Subcommand {
     overrides: &BTreeMap<String, String>,
     chooser: Option<&str>,
   ) -> Result<(), Error<'src>> {
-    let recipes = justfile
-      .public_recipes(config.unsorted)
-      .iter()
-      .filter(|recipe| recipe.min_arguments() == 0)
-      .copied()
-      .collect::<Vec<&Recipe<Dependency>>>();
+    let mut recipes = Vec::<&Recipe<Dependency>>::new();
+    let mut stack = vec![justfile];
+    while let Some(module) = stack.pop() {
+      recipes.extend(
+        module
+          .public_recipes(config)
+          .iter()
+          .filter(|recipe| recipe.min_arguments() == 0),
+      );
+      stack.extend(module.modules.values());
+    }
 
     if recipes.is_empty() {
       return Err(Error::NoChoosableRecipes);
     }
 
-    let chooser = chooser
-      .map(OsString::from)
-      .or_else(|| env::var_os(config::CHOOSER_ENVIRONMENT_KEY))
-      .unwrap_or_else(|| config::chooser_default(&search.justfile));
+    let chooser = chooser.map_or_else(|| config::chooser_default(&search.justfile), From::from);
 
     let result = justfile
       .settings
@@ -241,14 +261,15 @@ impl Subcommand {
     };
 
     for recipe in recipes {
-      if let Err(io_error) = child
-        .stdin
-        .as_mut()
-        .expect("Child was created with piped stdio")
-        .write_all(format!("{}\n", recipe.name).as_bytes())
-      {
-        return Err(Error::ChooserWrite { io_error, chooser });
-      }
+      writeln!(
+        child.stdin.as_mut().unwrap(),
+        "{}",
+        recipe.namepath.spaced()
+      )
+      .map_err(|io_error| Error::ChooserWrite {
+        io_error,
+        chooser: chooser.clone(),
+      })?;
     }
 
     let output = match child.wait_with_output() {
@@ -275,8 +296,8 @@ impl Subcommand {
     justfile.run(config, search, overrides, &recipes)
   }
 
-  fn completions(shell: &str) -> RunResult<'static, ()> {
-    use clap::Shell;
+  fn completions(shell: clap_complete::Shell) -> RunResult<'static, ()> {
+    use clap_complete::Shell;
 
     fn replace(haystack: &mut String, needle: &str, replacement: &str) -> RunResult<'static, ()> {
       if let Some(index) = haystack.find(needle) {
@@ -289,15 +310,28 @@ impl Subcommand {
       }
     }
 
-    let shell = shell
-      .parse::<Shell>()
-      .expect("Invalid value for clap::Shell");
+    let mut script = {
+      let mut tempfile = tempfile().map_err(|io_error| Error::TempfileIo { io_error })?;
 
-    let buffer = Vec::new();
-    let mut cursor = Cursor::new(buffer);
-    Config::app().gen_completions_to(env!("CARGO_PKG_NAME"), shell, &mut cursor);
-    let buffer = cursor.into_inner();
-    let mut script = String::from_utf8(buffer).expect("Clap completion not UTF-8");
+      clap_complete::generate(
+        shell,
+        &mut crate::config::Config::app(),
+        env!("CARGO_PKG_NAME"),
+        &mut tempfile,
+      );
+
+      tempfile
+        .rewind()
+        .map_err(|io_error| Error::TempfileIo { io_error })?;
+
+      let mut buffer = String::new();
+
+      tempfile
+        .read_to_string(&mut buffer)
+        .map_err(|io_error| Error::TempfileIo { io_error })?;
+
+      buffer
+    };
 
     match shell {
       Shell::Bash => {
@@ -319,7 +353,7 @@ impl Subcommand {
           replace(&mut script, needle, replacement)?;
         }
       }
-      Shell::Elvish => {}
+      _ => {}
     }
 
     println!("{}", script.trim());
@@ -426,108 +460,208 @@ impl Subcommand {
     }
   }
 
-  fn list(config: &Config, level: usize, justfile: &Justfile) {
-    // Construct a target to alias map.
-    let mut recipe_aliases: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for alias in justfile.aliases.values() {
-      if alias.is_private() {
-        continue;
-      }
+  fn man() -> Result<(), Error<'static>> {
+    let mut buffer = Vec::<u8>::new();
 
-      if recipe_aliases.contains_key(alias.target.name.lexeme()) {
-        let aliases = recipe_aliases.get_mut(alias.target.name.lexeme()).unwrap();
-        aliases.push(alias.name.lexeme());
-      } else {
-        recipe_aliases.insert(alias.target.name.lexeme(), vec![alias.name.lexeme()]);
-      }
+    Man::new(Config::app())
+      .render(&mut buffer)
+      .expect("writing to buffer cannot fail");
+
+    let mut stdout = io::stdout().lock();
+
+    stdout
+      .write_all(&buffer)
+      .map_err(|io_error| Error::StdoutIo { io_error })?;
+
+    stdout
+      .flush()
+      .map_err(|io_error| Error::StdoutIo { io_error })?;
+
+    Ok(())
+  }
+
+  fn list(config: &Config, mut module: &Justfile, path: &ModulePath) -> Result<(), Error<'static>> {
+    for name in &path.path {
+      module = module
+        .modules
+        .get(name)
+        .ok_or_else(|| Error::UnknownSubmodule { path: path.clone() })?;
     }
 
-    let mut line_widths: BTreeMap<&str, usize> = BTreeMap::new();
+    Self::list_module(config, module, 0);
 
-    for (name, recipe) in &justfile.recipes {
-      if !recipe.is_public() {
-        continue;
+    Ok(())
+  }
+
+  fn list_module(config: &Config, module: &Justfile, depth: usize) {
+    let aliases = if config.no_aliases {
+      BTreeMap::new()
+    } else {
+      let mut aliases = BTreeMap::<&str, Vec<&str>>::new();
+      for alias in module.aliases.values().filter(|alias| !alias.is_private()) {
+        aliases
+          .entry(alias.target.name.lexeme())
+          .or_default()
+          .push(alias.name.lexeme());
       }
+      aliases
+    };
 
-      for name in iter::once(name).chain(recipe_aliases.get(name).unwrap_or(&Vec::new())) {
-        let mut line_width = UnicodeWidthStr::width(*name);
+    let signature_widths = {
+      let mut signature_widths: BTreeMap<&str, usize> = BTreeMap::new();
 
-        for parameter in &recipe.parameters {
-          line_width += UnicodeWidthStr::width(
-            format!(" {}", parameter.color_display(Color::never())).as_str(),
+      for (name, recipe) in &module.recipes {
+        if !recipe.is_public() {
+          continue;
+        }
+
+        for name in iter::once(name).chain(aliases.get(name).unwrap_or(&Vec::new())) {
+          signature_widths.insert(
+            name,
+            UnicodeWidthStr::width(
+              RecipeSignature { name, recipe }
+                .color_display(Color::never())
+                .to_string()
+                .as_str(),
+            ),
           );
         }
-
-        if line_width <= 30 {
-          line_widths.insert(name, line_width);
-        }
       }
-    }
 
-    let max_line_width = cmp::min(line_widths.values().copied().max().unwrap_or(0), 30);
-    let doc_color = config.color.stdout().doc();
+      signature_widths
+    };
 
-    if level == 0 {
+    let max_signature_width = signature_widths
+      .values()
+      .copied()
+      .filter(|width| *width <= 50)
+      .max()
+      .unwrap_or(0);
+
+    let list_prefix = config.list_prefix.repeat(depth + 1);
+
+    if depth == 0 {
       print!("{}", config.list_heading);
     }
 
-    for recipe in justfile.public_recipes(config.unsorted) {
-      let name = recipe.name();
-
-      for (i, name) in iter::once(&name)
-        .chain(recipe_aliases.get(name).unwrap_or(&Vec::new()))
-        .enumerate()
-      {
-        print!("{}{name}", config.list_prefix.repeat(level + 1));
-        for parameter in &recipe.parameters {
-          print!(" {}", parameter.color_display(config.color.stdout()));
-        }
-
-        // Declaring this outside of the nested loops will probably be more efficient,
-        // but it creates all sorts of lifetime issues with variables inside the loops.
-        // If this is inlined like the docs say, it shouldn't make any difference.
-        let print_doc = |doc| {
-          print!(
-            " {:padding$}{} {}",
-            "",
-            doc_color.paint("#"),
-            doc_color.paint(doc),
-            padding = max_line_width
-              .saturating_sub(line_widths.get(name).copied().unwrap_or(max_line_width))
-          );
-        };
-
-        match (i, recipe.doc) {
-          (0, Some(doc)) => print_doc(doc),
-          (0, None) => (),
-          _ => {
-            let alias_doc = format!("alias for `{}`", recipe.name);
-            print_doc(&alias_doc);
+    let groups = {
+      let mut groups = BTreeMap::<Option<String>, Vec<&Recipe>>::new();
+      for recipe in module.public_recipes(config) {
+        let recipe_groups = recipe.groups();
+        if recipe_groups.is_empty() {
+          groups.entry(None).or_default().push(recipe);
+        } else {
+          for group in recipe_groups {
+            groups.entry(Some(group)).or_default().push(recipe);
           }
         }
+      }
+      groups
+    };
+
+    for (i, (group, recipes)) in groups.iter().enumerate() {
+      if i > 0 {
         println!();
+      }
+
+      let no_groups = groups.contains_key(&None) && groups.len() == 1;
+
+      if !no_groups {
+        print!("{list_prefix}");
+        if let Some(group_name) = group {
+          println!("[{group_name}]");
+        } else {
+          println!("(no group)");
+        }
+      }
+
+      for recipe in recipes {
+        for (i, name) in iter::once(&recipe.name())
+          .chain(aliases.get(recipe.name()).unwrap_or(&Vec::new()))
+          .enumerate()
+        {
+          let doc = if i == 0 {
+            recipe.doc().map(Cow::Borrowed)
+          } else {
+            Some(Cow::Owned(format!("alias for `{}`", recipe.name)))
+          };
+
+          if let Some(doc) = &doc {
+            if doc.lines().count() > 1 {
+              for line in doc.lines() {
+                println!(
+                  "{list_prefix}{} {}",
+                  config.color.stdout().doc().paint("#"),
+                  config.color.stdout().doc().paint(line),
+                );
+              }
+            }
+          }
+
+          print!(
+            "{list_prefix}{}",
+            RecipeSignature { name, recipe }.color_display(config.color.stdout())
+          );
+
+          if let Some(doc) = doc {
+            if doc.lines().count() <= 1 {
+              print!(
+                "{:padding$}{} {}",
+                "",
+                config.color.stdout().doc().paint("#"),
+                config.color.stdout().doc().paint(&doc),
+                padding = max_signature_width.saturating_sub(signature_widths[name]) + 1,
+              );
+            }
+          }
+          println!();
+        }
       }
     }
 
-    for (name, module) in &justfile.modules {
-      println!("    {name}:");
-      Self::list(config, level + 1, module);
+    if config.list_submodules {
+      for (i, submodule) in module.modules(config).into_iter().enumerate() {
+        if i + groups.len() > 0 {
+          println!();
+        }
+
+        println!("{list_prefix}{}:", submodule.name());
+
+        Self::list_module(config, submodule, depth + 1);
+      }
+    } else {
+      for submodule in module.modules(config) {
+        println!("{list_prefix}{} ...", submodule.name(),);
+      }
     }
   }
 
-  fn show<'src>(config: &Config, name: &str, justfile: &Justfile<'src>) -> Result<(), Error<'src>> {
-    if let Some(alias) = justfile.get_alias(name) {
-      let recipe = justfile.get_recipe(alias.target.name.lexeme()).unwrap();
+  fn show<'src>(
+    config: &Config,
+    mut module: &Justfile<'src>,
+    path: &ModulePath,
+  ) -> Result<(), Error<'src>> {
+    for name in &path.path[0..path.path.len() - 1] {
+      module = module
+        .modules
+        .get(name)
+        .ok_or_else(|| Error::UnknownSubmodule { path: path.clone() })?;
+    }
+
+    let name = path.path.last().unwrap();
+
+    if let Some(alias) = module.get_alias(name) {
+      let recipe = module.get_recipe(alias.target.name.lexeme()).unwrap();
       println!("{alias}");
       println!("{}", recipe.color_display(config.color.stdout()));
       Ok(())
-    } else if let Some(recipe) = justfile.get_recipe(name) {
+    } else if let Some(recipe) = module.get_recipe(name) {
       println!("{}", recipe.color_display(config.color.stdout()));
       Ok(())
     } else {
       Err(Error::UnknownRecipes {
         recipes: vec![name.to_owned()],
-        suggestion: justfile.suggest_recipe(name),
+        suggestion: module.suggest_recipe(name),
       })
     }
   }
@@ -550,7 +684,7 @@ impl Subcommand {
   ) {
     let path = components.join("::");
 
-    for recipe in justfile.public_recipes(config.unsorted) {
+    for recipe in justfile.public_recipes(config) {
       if *printed > 0 {
         print!(" ");
       }

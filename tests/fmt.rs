@@ -15,10 +15,10 @@ test! {
   name: check_without_fmt,
   justfile: "",
   args: ("--check"),
-  stderr_regex: "error: The following required arguments were not provided:
-    --fmt
+  stderr_regex: "error: the following required arguments were not provided:
+  --fmt
 (.|\\n)+",
-  status: EXIT_FAILURE,
+  status: 2,
 }
 
 test! {
@@ -103,6 +103,13 @@ fn unstable_passed() {
 
 #[test]
 fn write_error() {
+  // skip this test if running as root, since root can write files even if
+  // permissions would otherwise forbid it
+  #[cfg(not(windows))]
+  if unsafe { libc::getuid() } == 0 {
+    return;
+  }
+
   let tempdir = temptree! {
     justfile: "x    :=    'hello'   ",
   };

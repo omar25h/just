@@ -1,7 +1,4 @@
-use {
-  super::*,
-  std::process::{ExitStatus, Stdio},
-};
+use super::*;
 
 /// Return a `Error::Signal` if the process was terminated by a signal,
 /// otherwise return an `Error::UnknownFailure`
@@ -25,11 +22,13 @@ pub(crate) struct Recipe<'src, D = Dependency<'src>> {
   pub(crate) attributes: BTreeSet<Attribute<'src>>,
   pub(crate) body: Vec<Line<'src>>,
   pub(crate) dependencies: Vec<D>,
-  #[serde(skip)]
-  pub(crate) depth: u32,
   pub(crate) doc: Option<&'src str>,
   #[serde(skip)]
+  pub(crate) file_depth: u32,
+  #[serde(skip)]
   pub(crate) file_path: PathBuf,
+  #[serde(skip)]
+  pub(crate) import_offsets: Vec<usize>,
   pub(crate) name: Name<'src>,
   pub(crate) namepath: Namepath<'src>,
   pub(crate) parameters: Vec<Parameter<'src>>,
@@ -37,6 +36,8 @@ pub(crate) struct Recipe<'src, D = Dependency<'src>> {
   pub(crate) private: bool,
   pub(crate) quiet: bool,
   pub(crate) shebang: bool,
+  #[serde(skip)]
+  pub(crate) submodule_depth: u32,
   #[serde(skip)]
   pub(crate) working_directory: PathBuf,
 }
@@ -129,7 +130,7 @@ impl<'src, D> Recipe<'src, D> {
 
   fn working_directory<'a>(&'a self, search: &'a Search) -> Option<&Path> {
     if self.change_directory() {
-      Some(if self.depth > 0 {
+      Some(if self.submodule_depth > 0 {
         &self.working_directory
       } else {
         &search.working_directory
@@ -146,9 +147,7 @@ impl<'src, D> Recipe<'src, D> {
   pub(crate) fn run<'run>(
     &self,
     context: &RecipeContext<'src, 'run>,
-    dotenv: &BTreeMap<String, String>,
-    scope: Scope<'src, 'run>,
-    search: &'run Search,
+    scope: &Scope<'src, 'run>,
     positional: &[String],
   ) -> RunResult<'src, ()> {
     let config = &context.config;
@@ -163,20 +162,25 @@ impl<'src, D> Recipe<'src, D> {
       );
     }
 
-    let evaluator =
-      Evaluator::recipe_evaluator(context.config, dotenv, &scope, context.settings, search);
+    let evaluator = Evaluator::recipe_evaluator(
+      context.config,
+      context.dotenv,
+      context.module_source,
+      scope,
+      context.search,
+      context.settings,
+    );
 
     if self.shebang {
-      self.run_shebang(context, dotenv, &scope, positional, config, evaluator)
+      self.run_shebang(context, scope, positional, config, evaluator)
     } else {
-      self.run_linewise(context, dotenv, &scope, positional, config, evaluator)
+      self.run_linewise(context, scope, positional, config, evaluator)
     }
   }
 
   fn run_linewise<'run>(
     &self,
     context: &RecipeContext<'src, 'run>,
-    dotenv: &BTreeMap<String, String>,
     scope: &Scope<'src, 'run>,
     positional: &[String],
     config: &Config,
@@ -233,12 +237,24 @@ impl<'src, D> Recipe<'src, D> {
           || (context.settings.quiet && !self.no_quiet())
           || config.verbosity.quiet())
       {
-        let color = if config.highlight {
-          config.color.command(config.command_color)
-        } else {
-          config.color
-        };
-        eprintln!("{}", color.stderr().paint(command));
+        let color = config
+          .highlight
+          .then(|| config.color.command(config.command_color))
+          .unwrap_or(config.color)
+          .stderr();
+
+        if config.timestamp {
+          eprint!(
+            "[{}] ",
+            color.paint(
+              &chrono::Local::now()
+                .format(&config.timestamp_format)
+                .to_string()
+            ),
+          );
+        }
+
+        eprintln!("{}", color.paint(command));
       }
 
       if config.dry_run {
@@ -263,7 +279,7 @@ impl<'src, D> Recipe<'src, D> {
         cmd.stdout(Stdio::null());
       }
 
-      cmd.export(context.settings, dotenv, scope);
+      cmd.export(context.settings, context.dotenv, scope);
 
       match InterruptHandler::guard(|| cmd.status()) {
         Ok(exit_status) => {
@@ -297,20 +313,26 @@ impl<'src, D> Recipe<'src, D> {
   pub(crate) fn run_shebang<'run>(
     &self,
     context: &RecipeContext<'src, 'run>,
-    dotenv: &BTreeMap<String, String>,
     scope: &Scope<'src, 'run>,
     positional: &[String],
     config: &Config,
     mut evaluator: Evaluator<'src, 'run>,
   ) -> RunResult<'src, ()> {
-    let mut evaluated_lines = vec![];
+    let mut evaluated_lines = Vec::new();
     for line in &self.body {
       evaluated_lines.push(evaluator.evaluate_line(line, false)?);
     }
 
     if config.verbosity.loud() && (config.dry_run || self.quiet) {
       for line in &evaluated_lines {
-        eprintln!("{line}");
+        eprintln!(
+          "{}",
+          config
+            .color
+            .command(config.command_color)
+            .stderr()
+            .paint(line)
+        );
       }
     }
 
@@ -330,9 +352,20 @@ impl<'src, D> Recipe<'src, D> {
     tempdir_builder.prefix("just-");
     let tempdir = match &context.settings.tempdir {
       Some(tempdir) => tempdir_builder.tempdir_in(context.search.working_directory.join(tempdir)),
-      None => tempdir_builder.tempdir(),
+      None => {
+        if let Some(cache_dir) = dirs::cache_dir() {
+          let path = cache_dir.join("just");
+          fs::create_dir_all(&path).map_err(|io_error| Error::CacheDirIo {
+            io_error,
+            path: path.clone(),
+          })?;
+          tempdir_builder.tempdir_in(path)
+        } else {
+          tempdir_builder.tempdir()
+        }
+      }
     }
-    .map_err(|error| Error::TmpdirIo {
+    .map_err(|error| Error::TempdirIo {
       recipe: self.name(),
       io_error: error,
     })?;
@@ -340,7 +373,7 @@ impl<'src, D> Recipe<'src, D> {
     path.push(shebang.script_filename(self.name()));
 
     {
-      let mut f = fs::File::create(&path).map_err(|error| Error::TmpdirIo {
+      let mut f = fs::File::create(&path).map_err(|error| Error::TempdirIo {
         recipe: self.name(),
         io_error: error,
       })?;
@@ -368,14 +401,14 @@ impl<'src, D> Recipe<'src, D> {
       }
 
       f.write_all(text.as_bytes())
-        .map_err(|error| Error::TmpdirIo {
+        .map_err(|error| Error::TempdirIo {
           recipe: self.name(),
           io_error: error,
         })?;
     }
 
     // make script executable
-    Platform::set_execute_permission(&path).map_err(|error| Error::TmpdirIo {
+    Platform::set_execute_permission(&path).map_err(|error| Error::TempdirIo {
       recipe: self.name(),
       io_error: error,
     })?;
@@ -392,7 +425,7 @@ impl<'src, D> Recipe<'src, D> {
       command.args(positional);
     }
 
-    command.export(context.settings, dotenv, scope);
+    command.export(context.settings, context.dotenv, scope);
 
     // run it!
     match InterruptHandler::guard(|| command.status()) {
@@ -418,6 +451,29 @@ impl<'src, D> Recipe<'src, D> {
         io_error,
       }),
     }
+  }
+
+  pub(crate) fn groups(&self) -> BTreeSet<String> {
+    self
+      .attributes
+      .iter()
+      .filter_map(|attribute| {
+        if let Attribute::Group(group) = attribute {
+          Some(group.cooked.clone())
+        } else {
+          None
+        }
+      })
+      .collect()
+  }
+
+  pub(crate) fn doc(&self) -> Option<&str> {
+    for attribute in &self.attributes {
+      if let Attribute::Doc(doc) = attribute {
+        return doc.as_ref().map(|s| s.cooked.as_ref());
+      }
+    }
+    self.doc
   }
 }
 

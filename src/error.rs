@@ -13,9 +13,16 @@ pub(crate) enum Error<'src> {
     min: usize,
     max: usize,
   },
+  Assert {
+    message: String,
+  },
   Backtick {
     token: Token<'src>,
     output_error: OutputError,
+  },
+  CacheDirIo {
+    io_error: io::Error,
+    path: PathBuf,
   },
   ChooserInvoke {
     shell_binary: String,
@@ -72,6 +79,7 @@ pub(crate) enum Error<'src> {
   Dotenv {
     dotenv_error: dotenvy::Error,
   },
+  DotenvRequired,
   DumpJson {
     serde_json_error: serde_json::Error,
   },
@@ -139,13 +147,22 @@ pub(crate) enum Error<'src> {
     line_number: Option<usize>,
     signal: i32,
   },
-  TmpdirIo {
+  StdoutIo {
+    io_error: io::Error,
+  },
+  TempdirIo {
     recipe: &'src str,
+    io_error: io::Error,
+  },
+  TempfileIo {
     io_error: io::Error,
   },
   Unknown {
     recipe: &'src str,
     line_number: Option<usize>,
+  },
+  UnknownSubmodule {
+    path: ModulePath,
   },
   UnknownOverrides {
     overrides: Vec<String>,
@@ -256,6 +273,9 @@ impl<'src> ColorDisplay for Error<'src> {
           write!(f, "Recipe `{recipe}` got {found} {count} but takes at most {max}")?;
         }
       }
+      Assert { message }=> {
+        write!(f, "Assert failed: {message}")?;
+      }
       Backtick { output_error, .. } => match output_error {
         OutputError::Code(code) => write!(f, "Backtick failed with exit code {code}")?,
         OutputError::Signal(signal) => write!(f, "Backtick was terminated by signal {signal}")?,
@@ -266,6 +286,9 @@ impl<'src> ColorDisplay for Error<'src> {
             _ => write!(f, "Backtick could not be run because of an IO error while launching the shell:\n{io_error}"),
           }?,
         OutputError::Utf8(utf8_error) => write!(f, "Backtick succeeded but stdout was not utf8: {utf8_error}")?,
+      }
+      CacheDirIo { io_error, path } => {
+        write!(f, "I/O error in cache dir `{}`: {io_error}", path.display())?;
       }
       ChooserInvoke { shell_binary, shell_arguments, chooser, io_error} => {
         let chooser = chooser.to_string_lossy();
@@ -325,6 +348,9 @@ impl<'src> ColorDisplay for Error<'src> {
       Dotenv { dotenv_error } => {
         write!(f, "Failed to load environment file: {dotenv_error}")?;
       }
+      DotenvRequired => {
+        write!(f, "Dotenv file not found")?;
+      }
       DumpJson { serde_json_error } => {
         write!(f, "Failed to dump JSON to stdout: {serde_json_error}")?;
       }
@@ -370,8 +396,7 @@ impl<'src> ColorDisplay for Error<'src> {
         }?;
       }
       Load { io_error, path } => {
-        let path = path.display();
-        write!(f, "Failed to read justfile at `{path}`: {io_error}")?;
+        write!(f, "Failed to read justfile at `{}`: {io_error}", path.display())?;
       }
       MissingImportFile { .. } => write!(f, "Could not find source file for import.")?,
       MissingModuleFile { module } => write!(f, "Could not find source file for module `{module}`.")?,
@@ -397,9 +422,15 @@ impl<'src> ColorDisplay for Error<'src> {
           write!(f, "Recipe `{recipe}` was terminated by signal {signal}")?;
         }
       }
-      TmpdirIo { recipe, io_error } => {
+      StdoutIo { io_error } => {
+        write!(f, "I/O error writing to stdout: {io_error}?")?;
+      }
+      TempdirIo { recipe, io_error } => {
         write!(f, "Recipe `{recipe}` could not be run because of an IO error while trying to create a temporary \
-                   directory or write a file to that directory`:{io_error}")?;
+                   directory or write a file to that directory: {io_error}")?;
+      }
+      TempfileIo { io_error } => {
+        write!(f, "Tempfile I/O error: {io_error}")?;
       }
       Unknown { recipe, line_number} => {
         if let Some(n) = line_number {
@@ -407,6 +438,9 @@ impl<'src> ColorDisplay for Error<'src> {
         } else {
           write!(f, "Recipe `{recipe}` failed for an unknown reason")?;
         }
+      }
+      UnknownSubmodule { path } => {
+        write!(f, "Justfile does not contain submodule `{path}`")?;
       }
       UnknownOverrides { overrides } => {
         let count = Count("Variable", overrides.len());

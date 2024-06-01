@@ -43,21 +43,19 @@ pub(crate) const ZSH_COMPLETION_REPLACEMENTS: &[(&str, &str)] = &[
     r"    local common=(",
   ),
   (
-    r"'*--set=[Override <VARIABLE> with <VALUE>]' \",
-    r"'*--set[Override <VARIABLE> with <VALUE>]: :_just_variables' \",
+    r"'*--set=[Override <VARIABLE> with <VALUE>]:VARIABLE: :VARIABLE: ' \",
+    r"'*--set=[Override <VARIABLE> with <VALUE>]: :(_just_variables)' \",
   ),
   (
-    r"'-s+[Show information about <RECIPE>]' \
-'--show=[Show information about <RECIPE>]' \",
-    r"'-s+[Show information about <RECIPE>]: :_just_commands' \
-'--show=[Show information about <RECIPE>]: :_just_commands' \",
+    r"'()-s+[Show recipe at <PATH>]:PATH: ' \
+'()--show=[Show recipe at <PATH>]:PATH: ' \",
+    r"'-s+[Show recipe at <PATH>]: :(_just_commands)' \
+'--show=[Show recipe at <PATH>]: :(_just_commands)' \",
   ),
   (
-    "'::ARGUMENTS -- Overrides and recipe(s) to run, defaulting to the first recipe in the \
-     justfile:_files' \\
-&& ret=0
-\x20\x20\x20\x20
-",
+    "'*::ARGUMENTS -- Overrides and recipe(s) to run, defaulting to the first recipe in the \
+     justfile:' \\
+&& ret=0",
     r#")
 
     _arguments "${_arguments_options[@]}" $common \
@@ -105,9 +103,7 @@ pub(crate) const ZSH_COMPLETION_REPLACEMENTS: &[(&str, &str)] = &[
 "#,
   ),
   (
-    "    local commands; commands=(
-\x20\x20\x20\x20\x20\x20\x20\x20
-    )",
+    "    local commands; commands=()",
     r#"    [[ $PREFIX = -* ]] && return 1
     integer ret=1
     local variables; variables=(
@@ -206,5 +202,37 @@ pub(crate) const BASH_COMPLETION_REPLACEMENTS: &[(&str, &str)] = &[
                     fi
                 fi"#,
   ),
-  (r"            just)", r#"            "$1")"#),
+  (
+    r"local i cur prev opts cmd",
+    r"local i cur prev words cword opts cmd",
+  ),
+  (
+    r#"    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}""#,
+    r#"
+    # Modules use "::" as the separator, which is considered a wordbreak character in bash.
+    # The _get_comp_words_by_ref function is a hack to allow for exceptions to this rule without
+    # modifying the global COMP_WORDBREAKS environment variable.
+    if type _get_comp_words_by_ref &>/dev/null; then
+        _get_comp_words_by_ref -n : cur prev words cword
+    else
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=$COMP_WORDS
+        cword=$COMP_CWORD
+    fi
+"#,
+  ),
+  (r"for i in ${COMP_WORDS[@]}", r"for i in ${words[@]}"),
+  (
+    r"elif [[ ${COMP_CWORD} -eq 1 ]]; then",
+    r"elif [[ ${cword} -eq 1 ]]; then",
+  ),
+  (
+    r#"COMPREPLY=( $(compgen -W "${recipes}" -- "${cur}") )"#,
+    r#"COMPREPLY=( $(compgen -W "${recipes}" -- "${cur}") )
+                        if type __ltrim_colon_completions &>/dev/null; then
+                            __ltrim_colon_completions "$cur"
+                        fi"#,
+  ),
 ];

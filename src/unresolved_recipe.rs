@@ -48,9 +48,10 @@ impl<'src> UnresolvedRecipe<'src> {
       attributes: self.attributes,
       body: self.body,
       dependencies,
-      depth: self.depth,
       doc: self.doc,
+      file_depth: self.file_depth,
       file_path: self.file_path,
+      import_offsets: self.import_offsets,
       name: self.name,
       namepath: self.namepath,
       parameters: self.parameters,
@@ -58,6 +59,7 @@ impl<'src> UnresolvedRecipe<'src> {
       private: self.private,
       quiet: self.quiet,
       shebang: self.shebang,
+      submodule_depth: self.submodule_depth,
       working_directory: self.working_directory,
     })
   }

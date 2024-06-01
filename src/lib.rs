@@ -19,32 +19,35 @@ pub(crate) use {
     assignment_resolver::AssignmentResolver, ast::Ast, attribute::Attribute, binding::Binding,
     color::Color, color_display::ColorDisplay, command_ext::CommandExt, compilation::Compilation,
     compile_error::CompileError, compile_error_kind::CompileErrorKind, compiler::Compiler,
-    conditional_operator::ConditionalOperator, config::Config, config_error::ConfigError,
-    count::Count, delimiter::Delimiter, dependency::Dependency, dump_format::DumpFormat,
-    enclosure::Enclosure, error::Error, evaluator::Evaluator, expression::Expression,
-    fragment::Fragment, function::Function, function_context::FunctionContext,
+    condition::Condition, conditional_operator::ConditionalOperator, config::Config,
+    config_error::ConfigError, constants::constants, count::Count, delimiter::Delimiter,
+    dependency::Dependency, dump_format::DumpFormat, enclosure::Enclosure, error::Error,
+    evaluator::Evaluator, expression::Expression, fragment::Fragment, function::Function,
     interrupt_guard::InterruptGuard, interrupt_handler::InterruptHandler, item::Item,
     justfile::Justfile, keyed::Keyed, keyword::Keyword, lexer::Lexer, line::Line, list::List,
-    load_dotenv::load_dotenv, loader::Loader, name::Name, namepath::Namepath, ordinal::Ordinal,
-    output::output, output_error::OutputError, parameter::Parameter, parameter_kind::ParameterKind,
-    parser::Parser, platform::Platform, platform_interface::PlatformInterface, position::Position,
-    positional::Positional, ran::Ran, range_ext::RangeExt, recipe::Recipe,
-    recipe_context::RecipeContext, recipe_resolver::RecipeResolver, scope::Scope, search::Search,
-    search_config::SearchConfig, search_error::SearchError, set::Set, setting::Setting,
-    settings::Settings, shebang::Shebang, shell::Shell, show_whitespace::ShowWhitespace,
-    source::Source, string_kind::StringKind, string_literal::StringLiteral, subcommand::Subcommand,
-    suggestion::Suggestion, table::Table, thunk::Thunk, token::Token, token_kind::TokenKind,
-    unresolved_dependency::UnresolvedDependency, unresolved_recipe::UnresolvedRecipe,
-    use_color::UseColor, variables::Variables, verbosity::Verbosity, warning::Warning,
+    load_dotenv::load_dotenv, loader::Loader, module_path::ModulePath, name::Name,
+    namepath::Namepath, ordinal::Ordinal, output::output, output_error::OutputError,
+    parameter::Parameter, parameter_kind::ParameterKind, parser::Parser, platform::Platform,
+    platform_interface::PlatformInterface, position::Position, positional::Positional, ran::Ran,
+    range_ext::RangeExt, recipe::Recipe, recipe_context::RecipeContext,
+    recipe_resolver::RecipeResolver, recipe_signature::RecipeSignature, scope::Scope,
+    search::Search, search_config::SearchConfig, search_error::SearchError, set::Set,
+    setting::Setting, settings::Settings, shebang::Shebang, shell::Shell,
+    show_whitespace::ShowWhitespace, source::Source, string_kind::StringKind,
+    string_literal::StringLiteral, subcommand::Subcommand, suggestion::Suggestion, table::Table,
+    thunk::Thunk, token::Token, token_kind::TokenKind, unresolved_dependency::UnresolvedDependency,
+    unresolved_recipe::UnresolvedRecipe, use_color::UseColor, variables::Variables,
+    verbosity::Verbosity, warning::Warning,
   },
   std::{
+    borrow::Cow,
     cmp,
     collections::{BTreeMap, BTreeSet, HashMap},
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fmt::{self, Debug, Display, Formatter},
     fs,
-    io::{self, Cursor, Write},
+    io::{self, Write},
     iter::{self, FromIterator},
     mem,
     ops::Deref,
@@ -53,7 +56,7 @@ pub(crate) use {
     process::{self, Command, ExitStatus, Stdio},
     rc::Rc,
     str::{self, Chars},
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, OnceLock},
     vec,
   },
   {
@@ -69,7 +72,7 @@ pub(crate) use {
       Serialize, Serializer,
     },
     snafu::{ResultExt, Snafu},
-    strum::{Display, EnumString, IntoStaticStr},
+    strum::{Display, EnumDiscriminants, EnumString, IntoStaticStr},
     typed_arena::Arena,
     unicode_width::{UnicodeWidthChar, UnicodeWidthStr},
   },
@@ -124,9 +127,11 @@ mod compile_error;
 mod compile_error_kind;
 mod compiler;
 mod completions;
+mod condition;
 mod conditional_operator;
 mod config;
 mod config_error;
+mod constants;
 mod count;
 mod delimiter;
 mod dependency;
@@ -137,7 +142,6 @@ mod evaluator;
 mod expression;
 mod fragment;
 mod function;
-mod function_context;
 mod interrupt_guard;
 mod interrupt_handler;
 mod item;
@@ -149,6 +153,7 @@ mod line;
 mod list;
 mod load_dotenv;
 mod loader;
+mod module_path;
 mod name;
 mod namepath;
 mod ordinal;
@@ -166,6 +171,7 @@ mod range_ext;
 mod recipe;
 mod recipe_context;
 mod recipe_resolver;
+mod recipe_signature;
 mod run;
 mod scope;
 mod search;

@@ -3,9 +3,10 @@ use {super::*, serde::Serialize};
 #[derive(Debug)]
 struct Invocation<'src: 'run, 'run> {
   arguments: Vec<&'run str>,
+  module_source: &'run Path,
   recipe: &'run Recipe<'src>,
-  settings: &'run Settings<'src>,
   scope: &'run Scope<'src, 'run>,
+  settings: &'run Settings<'src>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -16,9 +17,13 @@ pub(crate) struct Justfile<'src> {
   pub(crate) default: Option<Rc<Recipe<'src>>>,
   #[serde(skip)]
   pub(crate) loaded: Vec<PathBuf>,
-  pub(crate) modules: BTreeMap<String, Justfile<'src>>,
+  pub(crate) modules: Table<'src, Justfile<'src>>,
+  #[serde(skip)]
+  pub(crate) name: Option<Name<'src>>,
   pub(crate) recipes: Table<'src, Rc<Recipe<'src>>>,
   pub(crate) settings: Settings<'src>,
+  #[serde(skip)]
+  pub(crate) source: PathBuf,
   pub(crate) warnings: Vec<Warning>,
 }
 
@@ -104,9 +109,10 @@ impl<'src> Justfile<'src> {
       &self.assignments,
       config,
       dotenv,
+      &self.source,
       scope,
-      &self.settings,
       search,
+      &self.settings,
     )
   }
 
@@ -135,7 +141,7 @@ impl<'src> Justfile<'src> {
       BTreeMap::new()
     };
 
-    let root = Scope::new();
+    let root = Scope::root();
 
     let scope = self.scope(config, &dotenv, search, overrides, &root)?;
 
@@ -274,10 +280,12 @@ impl<'src> Justfile<'src> {
     let mut ran = Ran::default();
     for invocation in invocations {
       let context = RecipeContext {
-        settings: invocation.settings,
         config,
+        dotenv: &dotenv,
+        module_source: invocation.module_source,
         scope: invocation.scope,
         search,
+        settings: invocation.settings,
       };
 
       Self::run_recipe(
@@ -288,7 +296,6 @@ impl<'src> Justfile<'src> {
           .map(str::to_string)
           .collect::<Vec<String>>(),
         &context,
-        &dotenv,
         &mut ran,
         invocation.recipe,
         search,
@@ -344,6 +351,7 @@ impl<'src> Justfile<'src> {
               recipe,
               arguments: Vec::new(),
               scope,
+              module_source: &self.source,
             },
             depth,
           )));
@@ -371,6 +379,7 @@ impl<'src> Justfile<'src> {
             recipe,
             scope: parent,
             settings: &self.settings,
+            module_source: &self.source,
           },
           depth,
         )))
@@ -392,6 +401,7 @@ impl<'src> Justfile<'src> {
             recipe,
             scope: parent,
             settings: &self.settings,
+            module_source: &self.source,
           },
           depth + argument_count,
         )))
@@ -401,10 +411,13 @@ impl<'src> Justfile<'src> {
     }
   }
 
+  pub(crate) fn name(&self) -> &'src str {
+    self.name.map(|name| name.lexeme()).unwrap_or_default()
+  }
+
   fn run_recipe(
     arguments: &[String],
     context: &RecipeContext<'src, '_>,
-    dotenv: &BTreeMap<String, String>,
     ran: &mut Ran<'src>,
     recipe: &Recipe<'src>,
     search: &Search,
@@ -420,19 +433,26 @@ impl<'src> Justfile<'src> {
     }
 
     let (outer, positional) = Evaluator::evaluate_parameters(
-      context.config,
-      dotenv,
-      &recipe.parameters,
       arguments,
+      context.config,
+      context.dotenv,
+      context.module_source,
+      &recipe.parameters,
       context.scope,
-      context.settings,
       search,
+      context.settings,
     )?;
 
     let scope = outer.child();
 
-    let mut evaluator =
-      Evaluator::recipe_evaluator(context.config, dotenv, &scope, context.settings, search);
+    let mut evaluator = Evaluator::recipe_evaluator(
+      context.config,
+      context.dotenv,
+      context.module_source,
+      &scope,
+      search,
+      context.settings,
+    );
 
     if !context.config.no_dependencies {
       for Dependency { recipe, arguments } in recipe.dependencies.iter().take(recipe.priors) {
@@ -441,11 +461,11 @@ impl<'src> Justfile<'src> {
           .map(|argument| evaluator.evaluate_expression(argument))
           .collect::<RunResult<Vec<String>>>()?;
 
-        Self::run_recipe(&arguments, context, dotenv, ran, recipe, search)?;
+        Self::run_recipe(&arguments, context, ran, recipe, search)?;
       }
     }
 
-    recipe.run(context, dotenv, scope.child(), search, &positional)?;
+    recipe.run(context, &scope, &positional)?;
 
     if !context.config.no_dependencies {
       let mut ran = Ran::default();
@@ -457,15 +477,31 @@ impl<'src> Justfile<'src> {
           evaluated.push(evaluator.evaluate_expression(argument)?);
         }
 
-        Self::run_recipe(&evaluated, context, dotenv, &mut ran, recipe, search)?;
+        Self::run_recipe(&evaluated, context, &mut ran, recipe, search)?;
       }
     }
 
     ran.ran(&recipe.namepath, arguments.to_vec());
+
     Ok(())
   }
 
-  pub(crate) fn public_recipes(&self, source_order: bool) -> Vec<&Recipe<'src, Dependency>> {
+  pub(crate) fn modules(&self, config: &Config) -> Vec<&Justfile> {
+    let mut modules = self.modules.values().collect::<Vec<&Justfile>>();
+
+    if config.unsorted {
+      modules.sort_by_key(|module| {
+        module
+          .name
+          .map(|name| name.token.offset)
+          .unwrap_or_default()
+      });
+    }
+
+    modules
+  }
+
+  pub(crate) fn public_recipes(&self, config: &Config) -> Vec<&Recipe<'src, Dependency>> {
     let mut recipes = self
       .recipes
       .values()
@@ -473,20 +509,21 @@ impl<'src> Justfile<'src> {
       .filter(|recipe| recipe.is_public())
       .collect::<Vec<&Recipe<Dependency>>>();
 
-    if source_order {
-      recipes.sort_by_key(|recipe| {
-        (
-          self
-            .loaded
-            .iter()
-            .position(|path| path == recipe.name.path)
-            .unwrap(),
-          recipe.name.offset,
-        )
-      });
+    if config.unsorted {
+      recipes.sort_by_key(|recipe| (&recipe.import_offsets, recipe.name.offset));
     }
 
     recipes
+  }
+
+  pub(crate) fn public_groups(&self) -> BTreeSet<String> {
+    self
+      .recipes
+      .values()
+      .map(AsRef::as_ref)
+      .filter(|recipe| recipe.is_public())
+      .flat_map(Recipe::groups)
+      .collect()
   }
 }
 
@@ -518,6 +555,12 @@ impl<'src> ColorDisplay for Justfile<'src> {
       }
     }
     Ok(())
+  }
+}
+
+impl<'src> Keyed<'src> for Justfile<'src> {
+  fn key(&self) -> &'src str {
+    self.name()
   }
 }
 
@@ -562,36 +605,6 @@ mod tests {
         target: Some("foo"),
       }
     ));
-    }
-  }
-
-  // This test exists to make sure that shebang recipes run correctly.  Although
-  // this script is still executed by a shell its behavior depends on the value of
-  // a variable and continuing even though a command fails, whereas in plain
-  // recipes variables are not available in subsequent lines and execution stops
-  // when a line fails.
-  run_error! {
-    name: run_shebang,
-    src: "
-      a:
-        #!/usr/bin/env sh
-        code=200
-          x() { return $code; }
-            x
-              x
-    ",
-    args: ["a"],
-    error: Code {
-      recipe,
-      line_number,
-      code,
-      print_message,
-    },
-    check: {
-      assert_eq!(recipe, "a");
-      assert_eq!(code, 200);
-      assert_eq!(line_number, None);
-      assert!(print_message);
     }
   }
 

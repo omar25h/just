@@ -436,15 +436,6 @@ fn semver_matches() {
     .run();
 }
 
-fn assert_eval_eq(expression: &str, result: &str) {
-  Test::new()
-    .justfile(format!("x := {expression}"))
-    .args(["--evaluate", "x"])
-    .stdout(result)
-    .unindent_stdout(false)
-    .run();
-}
-
 #[test]
 fn trim_end_matches() {
   assert_eval_eq("trim_end_matches('foo', 'o')", "f");
@@ -479,6 +470,48 @@ fn trim_start() {
 #[test]
 fn trim_end() {
   assert_eval_eq("trim_end('  f  ')", "  f");
+}
+
+#[test]
+fn append() {
+  assert_eval_eq("append('8', 'r s t')", "r8 s8 t8");
+  assert_eval_eq("append('.c', 'main sar x11')", "main.c sar.c x11.c");
+  assert_eval_eq("append('-', 'c v h y')", "c- v- h- y-");
+  assert_eval_eq(
+    "append('0000', '11 10 01 00')",
+    "110000 100000 010000 000000",
+  );
+  assert_eval_eq(
+    "append('tion', '
+    Determina
+    Acquisi
+    Motiva
+    Conjuc
+    ')",
+    "Determination Acquisition Motivation Conjuction",
+  );
+}
+
+#[test]
+fn prepend() {
+  assert_eval_eq("prepend('8', 'r s t\n  \n  ')", "8r 8s 8t");
+  assert_eval_eq(
+    "prepend('src/', 'main sar x11')",
+    "src/main src/sar src/x11",
+  );
+  assert_eval_eq("prepend('-', 'c\tv h\ny')", "-c -v -h -y");
+  assert_eval_eq(
+    "prepend('0000', '11 10 01 00')",
+    "000011 000010 000001 000000",
+  );
+  assert_eval_eq(
+    "prepend('April-', '
+      1st,
+        17th,
+    20th,
+    ')",
+    "April-1st, April-17th, April-20th,",
+  );
 }
 
 #[test]
@@ -629,6 +662,69 @@ fn uuid() {
 }
 
 #[test]
+fn choose() {
+  Test::new()
+    .justfile(r#"x := choose('10', 'xXyYzZ')"#)
+    .args(["--evaluate", "x"])
+    .stdout_regex("^[X-Zx-z]{10}$")
+    .run();
+}
+
+#[test]
+fn choose_bad_alphabet_empty() {
+  Test::new()
+    .justfile("x := choose('10', '')")
+    .args(["--evaluate"])
+    .status(1)
+    .stderr(
+      "
+      error: Call to function `choose` failed: empty alphabet
+       ——▶ justfile:1:6
+        │
+      1 │ x := choose('10', '')
+        │      ^^^^^^
+    ",
+    )
+    .run();
+}
+
+#[test]
+fn choose_bad_alphabet_repeated() {
+  Test::new()
+    .justfile("x := choose('10', 'aa')")
+    .args(["--evaluate"])
+    .status(1)
+    .stderr(
+      "
+      error: Call to function `choose` failed: alphabet contains repeated character `a`
+       ——▶ justfile:1:6
+        │
+      1 │ x := choose('10', 'aa')
+        │      ^^^^^^
+    ",
+    )
+    .run();
+}
+
+#[test]
+fn choose_bad_length() {
+  Test::new()
+    .justfile("x := choose('foo', HEX)")
+    .args(["--evaluate"])
+    .status(1)
+    .stderr(
+      "
+      error: Call to function `choose` failed: failed to parse `foo` as positive integer: invalid digit found in string
+       ——▶ justfile:1:6
+        │
+      1 │ x := choose('foo', HEX)
+        │      ^^^^^^
+    ",
+    )
+    .run();
+}
+
+#[test]
 fn sha256() {
   Test::new()
     .justfile("x := sha256('5943ee37-0000-1000-8000-010203040506')")
@@ -663,6 +759,81 @@ fn just_pid() {
   assert_eq!(stdout.parse::<u32>().unwrap(), pid);
 }
 
+#[test]
+fn shell_no_argument() {
+  Test::new()
+    .justfile("var := shell()")
+    .args(["--evaluate"])
+    .stderr(
+      "
+      error: Function `shell` called with 0 arguments but takes 1 or more
+       ——▶ justfile:1:8
+        │
+      1 │ var := shell()
+        │        ^^^^^
+      ",
+    )
+    .status(EXIT_FAILURE)
+    .run();
+}
+
+#[test]
+fn shell_minimal() {
+  assert_eval_eq("shell('echo $1 $2', 'justice', 'legs')", "justice legs");
+}
+
+#[test]
+fn shell_args() {
+  assert_eval_eq("shell('echo $@', 'justice', 'legs')", "justice legs");
+}
+
+#[test]
+fn shell_first_arg() {
+  assert_eval_eq("shell('echo $0')", "echo $0");
+}
+
+#[test]
+fn shell_error() {
+  Test::new()
+    .justfile("var := shell('exit 1')")
+    .args(["--evaluate"])
+    .stderr(
+      "
+      error: Call to function `shell` failed: Process exited with status code 1
+       ——▶ justfile:1:8
+        │
+      1 │ var := shell('exit 1')
+        │        ^^^^^
+      ",
+    )
+    .status(EXIT_FAILURE)
+    .run();
+}
+
+#[test]
+fn blake3() {
+  Test::new()
+    .justfile("x := blake3('5943ee37-0000-1000-8000-010203040506')")
+    .args(["--evaluate", "x"])
+    .stdout("026c9f740a793ff536ddf05f8915ea4179421f47f0fa9545476076e9ba8f3f2b")
+    .run();
+}
+
+#[test]
+fn blake3_file() {
+  Test::new()
+    .justfile("x := blake3_file('sub/blakefile')")
+    .tree(tree! {
+      sub: {
+        blakefile: "just is great\n",
+      }
+    })
+    .current_dir("sub")
+    .args(["--evaluate", "x"])
+    .stdout("8379241877190ca4b94076a8c8f89fe5747f95c62f3e4bf41f7408a0088ae16d")
+    .run();
+}
+
 #[cfg(unix)]
 #[test]
 fn canonicalize() {
@@ -671,5 +842,188 @@ fn canonicalize() {
     .justfile("x := canonicalize('foo')")
     .symlink("justfile", "foo")
     .stdout_regex(".*/justfile")
+    .run();
+}
+
+#[test]
+fn encode_uri_component() {
+  Test::new()
+    .justfile("x := encode_uri_component(\"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\\\"#$%&'()*+,-./:;<=>?@[\\\\]^_`{|}~ \\t\\r\\n🌐\")")
+    .args(["--evaluate", "x"])
+    .stdout("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!%22%23%24%25%26'()*%2B%2C-.%2F%3A%3B%3C%3D%3E%3F%40%5B%5C%5D%5E_%60%7B%7C%7D~%20%09%0D%0A%F0%9F%8C%90")
+    .run();
+}
+
+#[test]
+fn source_file() {
+  Test::new()
+    .args(["--evaluate", "x"])
+    .justfile("x := source_file()")
+    .stdout_regex(r".*[/\\]justfile")
+    .run();
+
+  Test::new()
+    .args(["--evaluate", "x"])
+    .test_round_trip(false)
+    .justfile(
+      "
+        import 'foo.just'
+      ",
+    )
+    .write("foo.just", "x := source_file()")
+    .stdout_regex(r".*[/\\]foo.just")
+    .run();
+
+  Test::new()
+    .args(["--unstable", "foo", "bar"])
+    .test_round_trip(false)
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .write("foo.just", "x := source_file()\nbar:\n @echo '{{x}}'")
+    .stdout_regex(r".*[/\\]foo.just\n")
+    .run();
+}
+
+#[test]
+fn source_directory() {
+  Test::new()
+    .args(["--unstable", "foo", "bar"])
+    .test_round_trip(false)
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .write(
+      "foo/mod.just",
+      "x := source_directory()\nbar:\n @echo '{{x}}'",
+    )
+    .stdout_regex(r".*[/\\]foo\n")
+    .run();
+}
+
+#[test]
+fn module_paths() {
+  Test::new()
+    .write(
+      "foo/bar.just",
+      "
+imf := module_file()
+imd := module_directory()
+
+import-outer: import-inner
+
+@import-inner pmf=module_file() pmd=module_directory():
+  echo import
+  echo '{{ imf }}'
+  echo '{{ imd }}'
+  echo '{{ pmf }}'
+  echo '{{ pmd }}'
+  echo '{{ module_file() }}'
+  echo '{{ module_directory() }}'
+      ",
+    )
+    .write(
+      "baz/mod.just",
+      "
+import 'foo/bar.just'
+
+mmf := module_file()
+mmd := module_directory()
+
+outer: inner
+
+@inner pmf=module_file() pmd=module_directory():
+  echo module
+  echo '{{ mmf }}'
+  echo '{{ mmd }}'
+  echo '{{ pmf }}'
+  echo '{{ pmd }}'
+  echo '{{ module_file() }}'
+  echo '{{ module_directory() }}'
+      ",
+    )
+    .write(
+      "baz/foo/bar.just",
+      "
+imf := module_file()
+imd := module_directory()
+
+import-outer: import-inner
+
+@import-inner pmf=module_file() pmd=module_directory():
+  echo import
+  echo '{{ imf }}'
+  echo '{{ imd }}'
+  echo '{{ pmf }}'
+  echo '{{ pmd }}'
+  echo '{{ module_file() }}'
+  echo '{{ module_directory() }}'
+      ",
+    )
+    .justfile(
+      "
+        import 'foo/bar.just'
+        mod baz
+
+        rmf := module_file()
+        rmd := module_directory()
+
+        outer: inner
+
+        @inner pmf=module_file() pmd=module_directory():
+          echo root
+          echo '{{ rmf }}'
+          echo '{{ rmd }}'
+          echo '{{ pmf }}'
+          echo '{{ pmd }}'
+          echo '{{ module_file() }}'
+          echo '{{ module_directory() }}'
+      ",
+    )
+    .test_round_trip(false)
+    .args([
+      "--unstable",
+      "outer",
+      "import-outer",
+      "baz",
+      "outer",
+      "baz",
+      "import-outer",
+    ])
+    .stdout_regex(
+      r"root
+.*[/\\]just-test-tempdir......[/\\]justfile
+.*[/\\]just-test-tempdir......
+.*[/\\]just-test-tempdir......[/\\]justfile
+.*[/\\]just-test-tempdir......
+.*[/\\]just-test-tempdir......[/\\]justfile
+.*[/\\]just-test-tempdir......
+import
+.*[/\\]just-test-tempdir......[/\\]justfile
+.*[/\\]just-test-tempdir......
+.*[/\\]just-test-tempdir......[/\\]justfile
+.*[/\\]just-test-tempdir......
+.*[/\\]just-test-tempdir......[/\\]justfile
+.*[/\\]just-test-tempdir......
+module
+.*[/\\]just-test-tempdir......[/\\]baz[/\\]mod.just
+.*[/\\]just-test-tempdir......[/\\]baz
+.*[/\\]just-test-tempdir......[/\\]baz[/\\]mod.just
+.*[/\\]just-test-tempdir......[/\\]baz
+.*[/\\]just-test-tempdir......[/\\]baz[/\\]mod.just
+.*[/\\]just-test-tempdir......[/\\]baz
+import
+.*[/\\]just-test-tempdir......[/\\]baz[/\\]mod.just
+.*[/\\]just-test-tempdir......[/\\]baz
+.*[/\\]just-test-tempdir......[/\\]baz[/\\]mod.just
+.*[/\\]just-test-tempdir......[/\\]baz
+.*[/\\]just-test-tempdir......[/\\]baz[/\\]mod.just
+.*[/\\]just-test-tempdir......[/\\]baz
+",
+    )
     .run();
 }
