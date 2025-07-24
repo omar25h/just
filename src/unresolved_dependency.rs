@@ -2,12 +2,12 @@ use super::*;
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) struct UnresolvedDependency<'src> {
-  pub(crate) recipe: Name<'src>,
   pub(crate) arguments: Vec<Expression<'src>>,
+  pub(crate) recipe: Namepath<'src>,
 }
 
-impl<'src> Display for UnresolvedDependency<'src> {
-  fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+impl Display for UnresolvedDependency<'_> {
+  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
     if self.arguments.is_empty() {
       write!(f, "{}", self.recipe)
     } else {

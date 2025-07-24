@@ -3,13 +3,13 @@ use super::*;
 /// A line fragment consisting either of…
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum Fragment<'src> {
-  /// …raw text…
-  Text { token: Token<'src> },
   /// …an interpolation containing `expression`.
   Interpolation { expression: Expression<'src> },
+  /// …raw text…
+  Text { token: Token<'src> },
 }
 
-impl<'src> Serialize for Fragment<'src> {
+impl Serialize for Fragment<'_> {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: Serializer,

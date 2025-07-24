@@ -4,7 +4,7 @@ use super::*;
 pub(crate) enum Error<'src> {
   AmbiguousModuleFile {
     module: Name<'src>,
-    found: Vec<String>,
+    found: Vec<PathBuf>,
   },
   ArgumentCountMismatch {
     recipe: &'src str,
@@ -12,6 +12,9 @@ pub(crate) enum Error<'src> {
     found: usize,
     min: usize,
     max: usize,
+  },
+  Assert {
+    message: String,
   },
   Backtick {
     token: Token<'src>,
@@ -72,8 +75,9 @@ pub(crate) enum Error<'src> {
   Dotenv {
     dotenv_error: dotenvy::Error,
   },
+  DotenvRequired,
   DumpJson {
-    serde_json_error: serde_json::Error,
+    source: serde_json::Error,
   },
   EditorInvoke {
     editor: OsString,
@@ -86,6 +90,12 @@ pub(crate) enum Error<'src> {
   EvalUnknownVariable {
     variable: String,
     suggestion: Option<Suggestion<'src>>,
+  },
+  ExcessInvocations {
+    invocations: usize,
+  },
+  ExpectedSubmoduleButFoundRecipe {
+    path: String,
   },
   FormatCheckFoundDiff,
   FunctionCall {
@@ -101,6 +111,9 @@ pub(crate) enum Error<'src> {
   },
   Internal {
     message: String,
+  },
+  Interrupted {
+    signal: Signal,
   },
   Io {
     recipe: &'src str,
@@ -125,22 +138,54 @@ pub(crate) enum Error<'src> {
   RegexCompile {
     source: regex::Error,
   },
+  RuntimeDirIo {
+    io_error: io::Error,
+    path: PathBuf,
+  },
+  Script {
+    command: String,
+    io_error: io::Error,
+    recipe: &'src str,
+  },
   Search {
     search_error: SearchError,
   },
   Shebang {
-    recipe: &'src str,
-    command: String,
     argument: Option<String>,
+    command: String,
     io_error: io::Error,
+    recipe: &'src str,
   },
   Signal {
     recipe: &'src str,
     line_number: Option<usize>,
     signal: i32,
   },
-  TmpdirIo {
+  #[cfg(windows)]
+  SignalHandlerInstall {
+    source: ctrlc::Error,
+  },
+  #[cfg(unix)]
+  SignalHandlerPipeOpen {
+    io_error: io::Error,
+  },
+  #[cfg(unix)]
+  SignalHandlerSigaction {
+    signal: Signal,
+    io_error: io::Error,
+  },
+  #[cfg(unix)]
+  SignalHandlerSpawnThread {
+    io_error: io::Error,
+  },
+  StdoutIo {
+    io_error: io::Error,
+  },
+  TempdirIo {
     recipe: &'src str,
+    io_error: io::Error,
+  },
+  TempfileIo {
     io_error: io::Error,
   },
   Unknown {
@@ -150,12 +195,15 @@ pub(crate) enum Error<'src> {
   UnknownOverrides {
     overrides: Vec<String>,
   },
-  UnknownRecipes {
-    recipes: Vec<String>,
+  UnknownRecipe {
+    recipe: String,
     suggestion: Option<Suggestion<'src>>,
   },
-  Unstable {
-    message: String,
+  UnknownSubmodule {
+    path: String,
+  },
+  UnstableFeature {
+    unstable_feature: UnstableFeature,
   },
   WriteJustfile {
     justfile: PathBuf,
@@ -166,12 +214,23 @@ pub(crate) enum Error<'src> {
 impl<'src> Error<'src> {
   pub(crate) fn code(&self) -> Option<i32> {
     match self {
-      Self::Code { code, .. }
-      | Self::Backtick {
+      Self::Backtick {
         output_error: OutputError::Code(code),
         ..
-      } => Some(*code),
+      }
+      | Self::Code { code, .. } => Some(*code),
+
       Self::ChooserStatus { status, .. } | Self::EditorStatus { status, .. } => status.code(),
+      Self::Backtick {
+        output_error: OutputError::Signal(signal),
+        ..
+      }
+      | Self::Signal { signal, .. } => 128i32.checked_add(*signal),
+      Self::Backtick {
+        output_error: OutputError::Interrupted(signal),
+        ..
+      }
+      | Self::Interrupted { signal } => Some(signal.code()),
       _ => None,
     }
   }
@@ -212,7 +271,7 @@ impl<'src> From<CompileError<'src>> for Error<'src> {
   }
 }
 
-impl<'src> From<ConfigError> for Error<'src> {
+impl From<ConfigError> for Error<'_> {
   fn from(config_error: ConfigError) -> Self {
     Self::Config { config_error }
   }
@@ -224,13 +283,13 @@ impl<'src> From<dotenvy::Error> for Error<'src> {
   }
 }
 
-impl<'src> From<SearchError> for Error<'src> {
+impl From<SearchError> for Error<'_> {
   fn from(search_error: SearchError) -> Self {
     Self::Search { search_error }
   }
 }
 
-impl<'src> ColorDisplay for Error<'src> {
+impl ColorDisplay for Error<'_> {
   fn fmt(&self, f: &mut Formatter, color: Color) -> fmt::Result {
     use Error::*;
 
@@ -242,7 +301,7 @@ impl<'src> ColorDisplay for Error<'src> {
       AmbiguousModuleFile { module, found } =>
         write!(f,
           "Found multiple source files for module `{module}`: {}",
-          List::and_ticked(found),
+          List::and_ticked(found.iter().map(|path| path.display())),
         )?,
       ArgumentCountMismatch { recipe, found, min, max, .. } => {
         let count = Count("argument", *found);
@@ -256,10 +315,14 @@ impl<'src> ColorDisplay for Error<'src> {
           write!(f, "Recipe `{recipe}` got {found} {count} but takes at most {max}")?;
         }
       }
+      Assert { message }=> {
+        write!(f, "Assert failed: {message}")?;
+      }
       Backtick { output_error, .. } => match output_error {
         OutputError::Code(code) => write!(f, "Backtick failed with exit code {code}")?,
         OutputError::Signal(signal) => write!(f, "Backtick was terminated by signal {signal}")?,
         OutputError::Unknown => write!(f, "Backtick failed for an unknown reason")?,
+        OutputError::Interrupted(signal) => write!(f, "Backtick succeeded but `just` was interrupted by signal {signal}")?,
         OutputError::Io(io_error) => match io_error.kind() {
             io::ErrorKind::NotFound => write!(f, "Backtick could not be run because just could not find the shell:\n{io_error}"),
             io::ErrorKind::PermissionDenied => write!(f, "Backtick could not be run because just could not run the shell:\n{io_error}"),
@@ -309,6 +372,7 @@ impl<'src> ColorDisplay for Error<'src> {
         OutputError::Code(code) => write!(f, "Cygpath failed with exit code {code} while translating recipe `{recipe}` shebang interpreter path")?,
         OutputError::Signal(signal) => write!(f, "Cygpath terminated by signal {signal} while translating recipe `{recipe}` shebang interpreter path")?,
         OutputError::Unknown => write!(f, "Cygpath experienced an unknown failure while translating recipe `{recipe}` shebang interpreter path")?,
+        OutputError::Interrupted(signal) => write!(f, "Cygpath succeeded but `just` was interrupted by {signal}")?,
         OutputError::Io(io_error) => {
           match io_error.kind() {
             io::ErrorKind::NotFound => write!(f, "Could not find `cygpath` executable to translate recipe `{recipe}` shebang interpreter path:\n{io_error}"),
@@ -325,8 +389,11 @@ impl<'src> ColorDisplay for Error<'src> {
       Dotenv { dotenv_error } => {
         write!(f, "Failed to load environment file: {dotenv_error}")?;
       }
-      DumpJson { serde_json_error } => {
-        write!(f, "Failed to dump JSON to stdout: {serde_json_error}")?;
+      DotenvRequired => {
+        write!(f, "Dotenv file not found")?;
+      }
+      DumpJson { source } => {
+        write!(f, "Failed to dump JSON to stdout: {source}")?;
       }
       EditorInvoke { editor, io_error } => {
         let editor = editor.to_string_lossy();
@@ -342,6 +409,12 @@ impl<'src> ColorDisplay for Error<'src> {
           write!(f, "\n{suggestion}")?;
         }
       }
+      ExcessInvocations { invocations } => {
+        write!(f, "Expected 1 command-line recipe invocation but found {invocations}.")?;
+      },
+      ExpectedSubmoduleButFoundRecipe { path } => {
+        write!(f, "Expected submodule at `{path}` but found recipe.")?;
+      },
       FormatCheckFoundDiff => {
         write!(f, "Formatted justfile differs from original.")?;
       }
@@ -362,6 +435,9 @@ impl<'src> ColorDisplay for Error<'src> {
         write!(f, "Internal runtime error, this may indicate a bug in just: {message} \
                    consider filing an issue: https://github.com/casey/just/issues/new")?;
       }
+      Interrupted { signal } => {
+        write!(f, "Interrupted by {signal}")?;
+      }
       Io { recipe, io_error } => {
         match io_error.kind() {
           io::ErrorKind::NotFound => write!(f, "Recipe `{recipe}` could not be run because just could not find the shell: {io_error}"),
@@ -370,8 +446,7 @@ impl<'src> ColorDisplay for Error<'src> {
         }?;
       }
       Load { io_error, path } => {
-        let path = path.display();
-        write!(f, "Failed to read justfile at `{path}`: {io_error}")?;
+        write!(f, "Failed to read justfile at `{}`: {io_error}", path.display())?;
       }
       MissingImportFile { .. } => write!(f, "Could not find source file for import.")?,
       MissingModuleFile { module } => write!(f, "Could not find source file for module `{module}`.")?,
@@ -382,6 +457,12 @@ impl<'src> ColorDisplay for Error<'src> {
         write!(f, "Recipe `{recipe}` was not confirmed")?;
       }
       RegexCompile { source } => write!(f, "{source}")?,
+      RuntimeDirIo { io_error, path } => {
+        write!(f, "I/O error in runtime dir `{}`: {io_error}", path.display())?;
+      }
+      Script { command, io_error, recipe } => {
+        write!(f, "Recipe `{recipe}` with command `{command}` execution error: {io_error}")?;
+      }
       Search { search_error } => Display::fmt(search_error, f)?,
       Shebang { recipe, command, argument, io_error} => {
         if let Some(argument) = argument {
@@ -397,9 +478,31 @@ impl<'src> ColorDisplay for Error<'src> {
           write!(f, "Recipe `{recipe}` was terminated by signal {signal}")?;
         }
       }
-      TmpdirIo { recipe, io_error } => {
+      #[cfg(windows)]
+      SignalHandlerInstall { source } => {
+        write!(f, "Could not install signal handler: {source}")?;
+      }
+      #[cfg(unix)]
+      SignalHandlerPipeOpen { io_error } => {
+        write!(f, "I/O error opening pipe for signal handler: {io_error}")?;
+      }
+      #[cfg(unix)]
+      SignalHandlerSigaction { io_error, signal } => {
+        write!(f, "I/O error setting sigaction for {signal}: {io_error}")?;
+      }
+      #[cfg(unix)]
+      SignalHandlerSpawnThread { io_error } => {
+        write!(f, "I/O error spawning thread for signal handler: {io_error}")?;
+      }
+      StdoutIo { io_error } => {
+        write!(f, "I/O error writing to stdout: {io_error}")?;
+      }
+      TempdirIo { recipe, io_error } => {
         write!(f, "Recipe `{recipe}` could not be run because of an IO error while trying to create a temporary \
-                   directory or write a file to that directory`:{io_error}")?;
+                   directory or write a file to that directory: {io_error}")?;
+      }
+      TempfileIo { io_error } => {
+        write!(f, "Tempfile I/O error: {io_error}")?;
       }
       Unknown { recipe, line_number} => {
         if let Some(n) = line_number {
@@ -408,21 +511,22 @@ impl<'src> ColorDisplay for Error<'src> {
           write!(f, "Recipe `{recipe}` failed for an unknown reason")?;
         }
       }
+      UnknownSubmodule { path } => {
+        write!(f, "Justfile does not contain submodule `{path}`")?;
+      }
       UnknownOverrides { overrides } => {
         let count = Count("Variable", overrides.len());
         let overrides = List::and_ticked(overrides);
         write!(f, "{count} {overrides} overridden on the command line but not present in justfile")?;
       }
-      UnknownRecipes { recipes, suggestion } => {
-        let count = Count("recipe", recipes.len());
-        let recipes = List::or_ticked(recipes);
-        write!(f, "Justfile does not contain {count} {recipes}.")?;
+      UnknownRecipe { recipe, suggestion } => {
+        write!(f, "Justfile does not contain recipe `{recipe}`")?;
         if let Some(suggestion) = suggestion {
           write!(f, "\n{suggestion}")?;
         }
       }
-      Unstable { message } => {
-        write!(f, "{message} Invoke `just` with the `--unstable` flag to enable unstable features.")?;
+      UnstableFeature { unstable_feature } => {
+        write!(f, "{unstable_feature} Invoke `just` with `--unstable`, set the `JUST_UNSTABLE` environment variable, or add `set unstable` to your `justfile` to enable unstable features.")?;
       }
       WriteJustfile { justfile, io_error } => {
         let justfile = justfile.display();

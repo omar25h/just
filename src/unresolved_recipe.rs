@@ -5,7 +5,7 @@ pub(crate) type UnresolvedRecipe<'src> = Recipe<'src, UnresolvedDependency<'src>
 impl<'src> UnresolvedRecipe<'src> {
   pub(crate) fn resolve(
     self,
-    resolved: Vec<Rc<Recipe<'src>>>,
+    resolved: Vec<Arc<Recipe<'src>>>,
   ) -> CompileResult<'src, Recipe<'src>> {
     assert_eq!(
       self.dependencies.len(),
@@ -16,21 +16,19 @@ impl<'src> UnresolvedRecipe<'src> {
     );
 
     for (unresolved, resolved) in self.dependencies.iter().zip(&resolved) {
-      assert_eq!(unresolved.recipe.lexeme(), resolved.name.lexeme());
+      assert_eq!(unresolved.recipe.last().lexeme(), resolved.name.lexeme());
       if !resolved
         .argument_range()
         .contains(&unresolved.arguments.len())
       {
-        return Err(
-          unresolved
-            .recipe
-            .error(CompileErrorKind::DependencyArgumentCountMismatch {
-              dependency: unresolved.recipe.lexeme(),
-              found: unresolved.arguments.len(),
-              min: resolved.min_arguments(),
-              max: resolved.max_arguments(),
-            }),
-        );
+        return Err(unresolved.recipe.last().error(
+          CompileErrorKind::DependencyArgumentCountMismatch {
+            dependency: unresolved.recipe.clone(),
+            found: unresolved.arguments.len(),
+            min: resolved.min_arguments(),
+            max: resolved.max_arguments(),
+          },
+        ));
       }
     }
 
@@ -48,9 +46,9 @@ impl<'src> UnresolvedRecipe<'src> {
       attributes: self.attributes,
       body: self.body,
       dependencies,
-      depth: self.depth,
       doc: self.doc,
-      file_path: self.file_path,
+      file_depth: self.file_depth,
+      import_offsets: self.import_offsets,
       name: self.name,
       namepath: self.namepath,
       parameters: self.parameters,
@@ -58,7 +56,6 @@ impl<'src> UnresolvedRecipe<'src> {
       private: self.private,
       quiet: self.quiet,
       shebang: self.shebang,
-      working_directory: self.working_directory,
     })
   }
 }

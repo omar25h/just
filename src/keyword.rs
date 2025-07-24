@@ -5,9 +5,13 @@ use super::*;
 pub(crate) enum Keyword {
   Alias,
   AllowDuplicateRecipes,
+  AllowDuplicateVariables,
+  Assert,
   DotenvFilename,
   DotenvLoad,
+  DotenvOverride,
   DotenvPath,
+  DotenvRequired,
   Else,
   Export,
   Fallback,
@@ -16,14 +20,20 @@ pub(crate) enum Keyword {
   IgnoreComments,
   Import,
   Mod,
+  NoExitMessage,
   PositionalArguments,
   Quiet,
+  ScriptInterpreter,
   Set,
   Shell,
   Tempdir,
   True,
+  Unexport,
+  Unstable,
   WindowsPowershell,
   WindowsShell,
+  WorkingDirectory,
+  X,
 }
 
 impl Keyword {
@@ -39,5 +49,16 @@ impl Keyword {
 impl<'a> PartialEq<&'a str> for Keyword {
   fn eq(&self, other: &&'a str) -> bool {
     self.lexeme() == *other
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn keyword_case() {
+    assert_eq!(Keyword::X.lexeme(), "x");
+    assert_eq!(Keyword::IgnoreComments.lexeme(), "ignore-comments");
   }
 }

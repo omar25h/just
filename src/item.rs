@@ -3,7 +3,7 @@ use super::*;
 /// A single top-level item
 #[derive(Debug, Clone)]
 pub(crate) enum Item<'src> {
-  Alias(Alias<'src, Name<'src>>),
+  Alias(Alias<'src, Namepath<'src>>),
   Assignment(Assignment<'src>),
   Comment(&'src str),
   Import {
@@ -14,21 +14,26 @@ pub(crate) enum Item<'src> {
   },
   Module {
     absolute: Option<PathBuf>,
+    doc: Option<String>,
+    groups: Vec<String>,
     name: Name<'src>,
     optional: bool,
     relative: Option<StringLiteral<'src>>,
   },
   Recipe(UnresolvedRecipe<'src>),
   Set(Set<'src>),
+  Unexport {
+    name: Name<'src>,
+  },
 }
 
-impl<'src> Display for Item<'src> {
+impl Display for Item<'_> {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
     match self {
-      Item::Alias(alias) => write!(f, "{alias}"),
-      Item::Assignment(assignment) => write!(f, "{assignment}"),
-      Item::Comment(comment) => write!(f, "{comment}"),
-      Item::Import {
+      Self::Alias(alias) => write!(f, "{alias}"),
+      Self::Assignment(assignment) => write!(f, "{assignment}"),
+      Self::Comment(comment) => write!(f, "{comment}"),
+      Self::Import {
         relative, optional, ..
       } => {
         write!(f, "import")?;
@@ -39,7 +44,7 @@ impl<'src> Display for Item<'src> {
 
         write!(f, " {relative}")
       }
-      Item::Module {
+      Self::Module {
         name,
         relative,
         optional,
@@ -59,8 +64,9 @@ impl<'src> Display for Item<'src> {
 
         Ok(())
       }
-      Item::Recipe(recipe) => write!(f, "{}", recipe.color_display(Color::never())),
-      Item::Set(set) => write!(f, "{set}"),
+      Self::Recipe(recipe) => write!(f, "{}", recipe.color_display(Color::never())),
+      Self::Set(set) => write!(f, "{set}"),
+      Self::Unexport { name } => write!(f, "unexport {name}"),
     }
   }
 }
