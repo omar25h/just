@@ -91,10 +91,13 @@ Installation
 `just` should run on any system with a reasonable `sh`, including Linux, MacOS,
 and the BSDs.
 
+#### Windows
+
 On Windows, `just` works with the `sh` provided by
 [Git for Windows](https://git-scm.com),
 [GitHub Desktop](https://desktop.github.com), or
-[Cygwin](http://www.cygwin.com).
+[Cygwin](http://www.cygwin.com). After installation, `sh` must be
+available in the `PATH` of the shell you want to to invoke `just` from.
 
 If you'd rather not install `sh`, you can use the `shell` setting to use the
 shell of your choice.
@@ -237,7 +240,7 @@ most Windows users.)
     </tr>
     <tr>
       <td>
-        <a href=https://debian.org>Debian 13 (unreleased)</a> and
+        <a href=https://debian.org>Debian 13</a> and
         <a href=https://ubuntu.com>Ubuntu 24.04</a> derivatives</td>
       <td><a href=https://en.wikipedia.org/wiki/APT_(software)>apt</a></td>
       <td><a href=https://packages.debian.org/trixie/just>just</a></td>
@@ -596,6 +599,12 @@ The [zed-just](https://github.com/jackTabsCode/zed-just/) extension by
 
 Feel free to send me the commands necessary to get syntax highlighting working
 in your editor of choice so that I may include them here.
+
+### Model Context Protocol
+
+[just-mcp](http://github.com/promptexecution/just-mcp) provides a
+[model context protocol](https://en.wikipedia.org/wiki/Model_Context_Protocol)
+adapter to allow LLMs to query the contents of `justfiles` and run recipes.
 
 Quick Start
 -----------
@@ -2033,8 +2042,8 @@ A number of constants are predefined:
 | `HEX`<sup>1.27.0</sup> | `"0123456789abcdef"` |  |
 | `HEXLOWER`<sup>1.27.0</sup> | `"0123456789abcdef"` |  |
 | `HEXUPPER`<sup>1.27.0</sup> | `"0123456789ABCDEF"` |  |
-| `PATH_SEP`<sup>1.41.0</sup> | `"/"` | "\" |
-| `PATH_VAR_SEP`<sup>1.41.0</sup> | `":"` | ";" |
+| `PATH_SEP`<sup>1.41.0</sup> | `"/"` | `"\"` |
+| `PATH_VAR_SEP`<sup>1.41.0</sup> | `":"` | `";"` |
 | `CLEAR`<sup>1.37.0</sup> | `"\ec"` |  |
 | `NORMAL`<sup>1.37.0</sup> | `"\e[0m"` |  |
 | `BOLD`<sup>1.37.0</sup> | `"\e[1m"` |  |
@@ -4116,9 +4125,28 @@ watchexec just foo
 See `watchexec --help` for more info, including how to specify which files
 should be watched for changes.
 
-### Running tasks in parallel
+### Parallelism
 
-GNU parallel can be used to run tasks concurrently:
+Dependencies may be run in parallel with the `[parallel]` attribute.
+
+In this `justfile`, `foo`, `bar`, and `baz` will execute in parallel when
+`main` is run:
+
+```just
+[parallel]
+main: foo bar baz
+
+foo:
+  sleep 1
+
+bar:
+  sleep 1
+
+baz:
+  sleep 1
+```
+
+GNU `parallel` may be used to run recipe lines concurrently:
 
 ```just
 parallel:
