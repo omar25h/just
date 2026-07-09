@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn list_recipes_in_search_directory() {
+  Test::new()
+    .justfile("root-recipe:")
+    .write("child/justfile", "child-recipe:")
+    .current_dir("child")
+    .args(["--list", ".."])
+    .stdout(
+      "
+        Available recipes:
+            root-recipe
+      ",
+    )
+    .success();
+}
+
+#[test]
 fn modules_unsorted() {
   Test::new()
     .write("foo.just", "foo:")
@@ -20,7 +36,7 @@ fn modules_unsorted() {
             bar ...
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -54,7 +70,7 @@ fn unsorted_list_order() {
             d
       ",
     )
-    .run();
+    .success();
 
   Test::new()
     .write("a.just", "a:")
@@ -85,13 +101,37 @@ fn unsorted_list_order() {
             a
       ",
     )
-    .run();
+    .success();
 
   Test::new()
-    .write("a.just", "a:\nimport 'e.just'")
-    .write("b.just", "b:\nimport 'f.just'")
-    .write("c.just", "c:\nimport 'g.just'")
-    .write("d.just", "d:\nimport 'h.just'")
+    .write(
+      "a.just",
+      "
+        a:
+        import 'e.just'
+      ",
+    )
+    .write(
+      "b.just",
+      "
+        b:
+        import 'f.just'
+      ",
+    )
+    .write(
+      "c.just",
+      "
+        c:
+        import 'g.just'
+      ",
+    )
+    .write(
+      "d.just",
+      "
+        d:
+        import 'h.just'
+      ",
+    )
     .write("e.just", "e:")
     .write("f.just", "f:")
     .write("g.just", "g:")
@@ -124,7 +164,7 @@ fn unsorted_list_order() {
             e
       ",
     )
-    .run();
+    .success();
 
   Test::new()
     .write("task1.just", "task1:")
@@ -143,7 +183,7 @@ fn unsorted_list_order() {
             task2
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -158,11 +198,11 @@ fn list_submodule() {
     .args(["--list", "foo"])
     .stdout(
       "
-      Available recipes:
-          bar
-    ",
+        Available recipes:
+            bar
+      ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -182,7 +222,7 @@ fn list_nested_submodule() {
             baz
       ",
     )
-    .run();
+    .success();
 
   Test::new()
     .write("foo.just", "mod bar")
@@ -199,25 +239,24 @@ fn list_nested_submodule() {
             baz
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
 fn list_invalid_path() {
   Test::new()
     .args(["--list", "$hello"])
-    .stderr("error: Invalid module path `$hello`\n")
-    .status(1)
-    .run();
+    .stderr("error: invalid module path `$hello`\n")
+    .failure();
 }
 
 #[test]
 fn list_unknown_submodule() {
   Test::new()
+    .justfile("")
     .args(["--list", "hello"])
-    .stderr("error: Justfile does not contain submodule `hello`\n")
-    .status(1)
-    .run();
+    .stderr("error: justfile does not contain submodule `hello`\n")
+    .failure();
 }
 
 #[test]
@@ -231,7 +270,13 @@ fn list_with_groups_in_modules() {
         mod bar
       ",
     )
-    .write("bar.just", "[group('BAZ')]\nbaz:")
+    .write(
+      "bar.just",
+      "
+        [group('BAZ')]
+        baz:
+      ",
+    )
     .args(["--list", "--list-submodules"])
     .stdout(
       "
@@ -244,13 +289,19 @@ fn list_with_groups_in_modules() {
             foo
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
 fn list_displays_recipes_in_submodules() {
   Test::new()
-    .write("foo.just", "bar:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -259,12 +310,12 @@ fn list_displays_recipes_in_submodules() {
     .args(["--list", "--list-submodules"])
     .stdout(
       "
-      Available recipes:
-          foo:
-              bar
-    ",
+        Available recipes:
+            foo:
+                bar
+      ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -282,15 +333,15 @@ fn modules_are_space_separated_in_output() {
     .args(["--list", "--list-submodules"])
     .stdout(
       "
-      Available recipes:
-          bar:
-              bar
+        Available recipes:
+            bar:
+                bar
 
-          foo:
-              foo
-    ",
+            foo:
+                foo
+      ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -299,16 +350,16 @@ fn module_recipe_list_alignment_ignores_private_recipes() {
     .write(
       "foo.just",
       "
-# foos
-foo:
- @echo FOO
+        # foos
+        foo:
+         @echo FOO
 
-[private]
-barbarbar:
- @echo BAR
+        [private]
+        barbarbar:
+         @echo BAR
 
-@_bazbazbaz:
- @echo BAZ
+        @_bazbazbaz:
+         @echo BAZ
       ",
     )
     .justfile("mod foo")
@@ -320,14 +371,20 @@ barbarbar:
                 foo # foos
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
 fn nested_modules_are_properly_indented() {
   Test::new()
     .write("foo.just", "mod bar")
-    .write("bar.just", "baz:\n @echo FOO")
+    .write(
+      "bar.just",
+      "
+        baz:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -336,13 +393,13 @@ fn nested_modules_are_properly_indented() {
     .args(["--list", "--list-submodules"])
     .stdout(
       "
-      Available recipes:
-          foo:
-              bar:
-                  baz
-    ",
+        Available recipes:
+            foo:
+                bar:
+                    baz
+      ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -362,7 +419,7 @@ fn module_doc_rendered() {
             foo ... # Module foo
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -392,7 +449,7 @@ fn module_doc_aligned() {
             very_long_name_for_module ... # comment
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -417,7 +474,7 @@ fn submodules_without_groups() {
             bar
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -436,7 +493,7 @@ fn no_space_before_submodules_not_following_groups() {
             foo ...
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -451,10 +508,10 @@ fn backticks_highlighted() {
     .args(["--list", "--color=always"])
     .stdout(
       "
-        Available recipes:
-            recipe \u{1b}[34m#\u{1b}[0m \u{1b}[34mComment \u{1b}[0m\u{1b}[36m``\u{1b}[0m\u{1b}[34m \u{1b}[0m\u{1b}[36m`with backticks`\u{1b}[0m\u{1b}[34m and trailing text\u{1b}[0m
-      ")
-    .run();
+                Available recipes:
+                    recipe \u{1b}[34m#\u{1b}[0m \u{1b}[34mComment \u{1b}[0m\u{1b}[36m``\u{1b}[0m\u{1b}[34m \u{1b}[0m\u{1b}[36m`with backticks`\u{1b}[0m\u{1b}[34m and trailing text\u{1b}[0m
+              ")
+            .success();
 }
 
 #[test]
@@ -462,7 +519,7 @@ fn unclosed_backticks() {
   Test::new()
     .justfile(
       "
-        # Comment `with unclosed backick
+        # Comment `with unclosed backtick
         recipe:
       ",
     )
@@ -470,16 +527,80 @@ fn unclosed_backticks() {
     .stdout(
       "
         Available recipes:
-            recipe \u{1b}[34m#\u{1b}[0m \u{1b}[34mComment \u{1b}[0m\u{1b}[36m`with unclosed backick\u{1b}[0m
+            recipe \u{1b}[34m#\u{1b}[0m \u{1b}[34mComment \u{1b}[0m\u{1b}[36m`with unclosed backtick\u{1b}[0m
       ")
-    .run();
+    .success();
 }
 
 #[test]
 fn list_submodules_requires_list() {
   Test::new()
     .arg("--list-submodules")
-    .stderr_regex("error: the following required arguments were not provided:\n  --list .*")
-    .status(2)
-    .run();
+    .stderr_regex(unindent(
+      "
+        error: the following required arguments were not provided:
+          --list .*",
+    ))
+    .status(2);
+}
+
+#[test]
+fn options_are_collapsed_in_signature() {
+  Test::new()
+    .justfile(
+      "
+        [arg('foo', long)]
+        bar foo='baz':
+          echo {{foo}}
+      ",
+    )
+    .arg("--list")
+    .stdout(
+      "
+        Available recipes:
+            bar [OPTIONS]
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn positional_and_option_parameters_in_signature() {
+  Test::new()
+    .justfile(
+      "
+        [arg('foo', long)]
+        [arg('bar', short='b')]
+        recipe qux foo='x' bar='y' baz='z':
+          echo {{foo}} {{bar}} {{baz}} {{qux}}
+      ",
+    )
+    .arg("--list")
+    .stdout(
+      "
+        Available recipes:
+            recipe [OPTIONS] qux baz='z'
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn doc_above_wide_signature() {
+  Test::new()
+    .justfile(
+      r#"
+        # comment
+        foo bar="..................................................":
+      "#,
+    )
+    .arg("--list")
+    .stdout(
+      r#"
+        Available recipes:
+            # comment
+            foo bar=".................................................."
+      "#,
+    )
+    .success();
 }

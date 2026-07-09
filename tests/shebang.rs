@@ -1,79 +1,106 @@
 use super::*;
 
-#[cfg(windows)]
 #[test]
 fn powershell() {
+  if cfg!(not(windows)) {
+    return;
+  }
   Test::new()
     .justfile(
-      r#"
-default:
-  #!powershell
-  Write-Host Hello-World
-"#,
+      "
+        default:
+          #!powershell
+          Write-Host Hello-World
+      ",
     )
     .stdout("Hello-World\n")
-    .run();
+    .success();
 }
 
-#[cfg(windows)]
 #[test]
 fn powershell_exe() {
+  if cfg!(not(windows)) {
+    return;
+  }
   Test::new()
     .justfile(
-      r#"
-default:
-  #!powershell.exe
-   Write-Host Hello-World
-"#,
+      "
+        default:
+          #!powershell.exe
+           Write-Host Hello-World
+      ",
     )
     .stdout("Hello-World\n")
-    .run();
+    .success();
 }
 
-#[cfg(windows)]
+#[test]
+fn powershell_utf8() {
+  if cfg!(not(windows)) {
+    return;
+  }
+  Test::new()
+    .justfile(
+      "
+        default:
+          #!powershell.exe
+          $foo = 'café'
+          if ($foo.Length -ne 4) { exit 1 }
+      ",
+    )
+    .success();
+}
+
 #[test]
 fn cmd() {
+  if cfg!(not(windows)) {
+    return;
+  }
   Test::new()
     .justfile(
-      r#"
-default:
-  #!cmd /c
-  @echo Hello-World
-"#,
+      "
+        default:
+          #!cmd /c
+          @echo Hello-World
+      ",
     )
     .stdout("Hello-World\r\n")
-    .run();
+    .success();
 }
 
-#[cfg(windows)]
 #[test]
 fn cmd_exe() {
+  if cfg!(not(windows)) {
+    return;
+  }
   Test::new()
     .justfile(
-      r#"
-default:
-  #!cmd.exe /c
-  @echo Hello-World
-"#,
+      "
+        default:
+          #!cmd.exe /c
+          @echo Hello-World
+      ",
     )
     .stdout("Hello-World\r\n")
-    .run();
+    .success();
 }
 
-#[cfg(windows)]
 #[test]
 fn multi_line_cmd_shebangs_are_removed() {
+  if cfg!(not(windows)) {
+    return;
+  }
   Test::new()
     .justfile(
-      r#"
-default:
-  #!cmd.exe /c
-  #!foo
-  @echo Hello-World
-"#,
+      "
+        default:
+          #!cmd.exe /c
+          #!foo
+          @echo Hello-World
+      ",
     )
     .stdout("Hello-World\r\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -87,7 +114,7 @@ fn simple() {
       ",
     )
     .stdout("bar\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -102,7 +129,7 @@ fn echo() {
     )
     .stdout("fizz\n")
     .stderr("#!/bin/sh\necho fizz\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -118,7 +145,7 @@ fn echo_with_command_color() {
     .args(["--color", "always", "--command-color", "purple"])
     .stdout("fizz\n")
     .stderr("\u{1b}[1;35m#!/bin/sh\u{1b}[0m\n\u{1b}[1;35mecho fizz\u{1b}[0m\n")
-    .run();
+    .success();
 }
 
 // This test exists to make sure that shebang recipes run correctly.  Although
@@ -139,7 +166,20 @@ fn run_shebang() {
           x
       ",
     )
-    .status(200)
-    .stderr("error: Recipe `a` failed with exit code 200\n")
-    .run();
+    .stderr("error: recipe `a` failed with exit code 200\n")
+    .status(200);
+}
+
+#[test]
+fn invalid_shebang_error() {
+  Test::new()
+    .justfile(
+      "
+        foo:
+          #!{{ '' }}
+          echo bar
+      ",
+    )
+    .stderr_regex("error: recipe `foo` has invalid shebang `#!`\n")
+    .failure();
 }

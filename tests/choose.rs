@@ -16,7 +16,7 @@ fn env() {
     )
     .stderr("echo bar\n")
     .stdout("bar\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn chooser() {
     )
     .stderr("echo bar\n")
     .stdout("bar\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn override_variable() {
     )
     .stderr("echo B\n")
     .stdout("B\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -77,15 +77,21 @@ fn skip_private_recipes() {
     )
     .stderr("echo foo\n")
     .stdout("foo\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn recipes_in_submodules_can_be_chosen() {
   Test::new()
-    .args(["--unstable", "--choose"])
+    .arg("--choose")
     .env("JUST_CHOOSER", "head -n10")
-    .write("bar.just", "baz:\n echo BAZ")
+    .write(
+      "bar.just",
+      "
+        baz:
+         echo BAZ
+      ",
+    )
     .justfile(
       "
         mod bar
@@ -93,7 +99,7 @@ fn recipes_in_submodules_can_be_chosen() {
     )
     .stderr("echo BAZ\n")
     .stdout("BAZ\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -112,7 +118,7 @@ fn skip_recipes_that_require_arguments() {
     )
     .stderr("echo foo\n")
     .stdout("foo\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -128,9 +134,8 @@ fn no_choosable_recipes() {
           echo {{BAR}}
       ",
     )
-    .status(EXIT_FAILURE)
-    .stderr("error: Justfile contains no choosable recipes.\n")
-    .run();
+    .stderr("error: justfile contains no choosable recipes\n")
+    .failure();
 }
 
 #[test]
@@ -150,7 +155,7 @@ fn multiple_recipes() {
     )
     .stderr("echo foo\necho bar\n")
     .stdout("foo\nbar\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -166,21 +171,25 @@ fn invoke_error_function() {
       ",
     )
     .stderr_regex(
-      r#"error: Chooser `/ -cu fzf --multi --preview 'just --unstable --color always --justfile ".*justfile" --show \{\}'` invocation failed: .*\n"#,
+      r#"error: chooser `/ -cu fzf --multi --preview 'just --unstable --color always --justfile ".*justfile" --show \{\}'` invocation failed: .*\n"#,
     )
-    .status(EXIT_FAILURE)
     .shell(false)
     .args(["--shell", "/", "--choose"])
-    .run();
+    .failure();
 }
 
 #[test]
-#[cfg(not(windows))]
 fn status_error() {
-  let tmp = temptree! {
-    justfile: "foo:\n echo foo\nbar:\n echo bar\n",
-    "exit-2": "#!/usr/bin/env bash\nexit 2\n",
-  };
+  if cfg!(windows) {
+    return;
+  }
+  let tmp = tempdir();
+  fs::write(
+    tmp.path().join("justfile"),
+    "foo:\n echo foo\nbar:\n echo bar\n",
+  )
+  .unwrap();
+  fs::write(tmp.path().join("exit-2"), "#!/usr/bin/env bash\nexit 2\n").unwrap();
 
   let output = Command::new("chmod")
     .arg("+x")
@@ -195,7 +204,7 @@ fn status_error() {
   )
   .unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("--choose")
     .arg("--chooser")
@@ -205,7 +214,7 @@ fn status_error() {
     .unwrap();
 
   assert!(
-    Regex::new("^error: Chooser `exit-2` failed: exit (code|status): 2\n$")
+    Regex::new("^error: chooser `exit-2` failed: exit (code|status): 2\n$")
       .unwrap()
       .is_match(str::from_utf8(&output.stderr).unwrap())
   );
@@ -214,10 +223,91 @@ fn status_error() {
 }
 
 #[test]
+fn cancelled_by_user() {
+  if cfg!(windows) {
+    return;
+  }
+
+  let tmp = tempdir();
+  fs::write(
+    tmp.path().join("justfile"),
+    "foo:\n echo foo\nbar:\n echo bar\n",
+  )
+  .unwrap();
+  fs::write(
+    tmp.path().join("chooser"),
+    "#!/usr/bin/env bash\nexit 130\n",
+  )
+  .unwrap();
+
+  let output = Command::new("chmod")
+    .arg("+x")
+    .arg(tmp.path().join("chooser"))
+    .output()
+    .unwrap();
+
+  assert!(output.status.success());
+
+  let output = Command::new(JUST)
+    .current_dir(tmp.path())
+    .arg("--choose")
+    .arg("--chooser")
+    .arg("./chooser")
+    .output()
+    .unwrap();
+
+  assert!(output.stderr.is_empty());
+
+  assert!(output.status.success());
+}
+
+#[test]
+fn chooser_selections_are_processed_separately() {
+  Test::new()
+    .args(["--choose", "--chooser", "cat"])
+    .write(
+      "sub.just",
+      "
+        bar:
+         @echo bar
+      ",
+    )
+    .justfile(
+      "
+        mod sub
+
+        foo *args:
+          @echo foo {{args}}
+      ",
+    )
+    .stdin("foo\nsub bar\n")
+    .stdout("foo\nbar\n")
+    .success();
+}
+
+#[test]
+fn filter_by_group() {
+  Test::new()
+    .args(["--choose", "--chooser", "head -n1", "--group", "foo"])
+    .justfile(
+      "
+        a:
+          echo A
+
+        [group: 'foo']
+        b:
+          echo B
+      ",
+    )
+    .stderr("echo B\n")
+    .stdout("B\n")
+    .success();
+}
+
+#[test]
 fn default() {
-  let tmp = temptree! {
-    justfile: "foo:\n echo foo\n",
-  };
+  let tmp = tempdir();
+  fs::write(tmp.path().join("justfile"), "foo:\n echo foo\n").unwrap();
 
   let cat = which("cat").unwrap();
   let fzf = tmp.path().join(format!("fzf{EXE_SUFFIX}"));
@@ -233,7 +323,7 @@ fn default() {
   )
   .unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .arg("--choose")
     .arg("--chooser=fzf")
     .current_dir(tmp.path())
@@ -242,4 +332,28 @@ fn default() {
     .unwrap();
 
   assert_stdout(&output, "foo\n");
+}
+
+#[test]
+fn skip_recipes_in_private_modules() {
+  Test::new()
+    .args(["--choose", "--chooser", "sort"])
+    .justfile(
+      "
+        [private]
+        mod foo
+
+        bar:
+          @echo bar
+      ",
+    )
+    .write(
+      "foo.just",
+      "
+        baz:
+          @echo baz
+      ",
+    )
+    .stdout("bar\n")
+    .success();
 }

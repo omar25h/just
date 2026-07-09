@@ -11,7 +11,7 @@ fn strings_are_shell_expanded() {
     .env("JUST_TEST_VARIABLE", "FOO")
     .args(["--evaluate", "x"])
     .stdout("FOO")
-    .run();
+    .success();
 }
 
 #[test]
@@ -22,17 +22,16 @@ fn shell_expanded_strings_must_not_have_whitespace() {
         x := x '$JUST_TEST_VARIABLE'
       ",
     )
-    .status(1)
     .stderr(
       "
-        error: Expected '&&', '||', comment, end of file, end of line, '(', '+', or '/', but found string
+        error: expected '&&', '!=', '!~', '||', comment, end of file, end of line, '==', '=~', '(', '+', '++', or '/', but found string
          ——▶ justfile:1:8
           │
         1 │ x := x '$JUST_TEST_VARIABLE'
           │        ^^^^^^^^^^^^^^^^^^^^^
       ",
     )
-    .run();
+    .failure();
 }
 
 #[test]
@@ -45,16 +44,16 @@ fn shell_expanded_error_messages_highlight_string_token() {
     )
     .env("JUST_TEST_VARIABLE", "FOO")
     .args(["--evaluate", "x"])
-    .status(1)
     .stderr(
-    "
-      error: Shell expansion failed: error looking key 'FOOOOOOOOOOOOOOOOOOOOOOOOOOOOO' up: environment variable not found
-       ——▶ justfile:1:7
-        │
-      1 │ x := x'$FOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
-        │       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-      ")
-    .run();
+      "
+        error: shell expansion failed: error looking key 'FOOOOOOOOOOOOOOOOOOOOOOOOOOOOO' up: environment variable not found
+         ——▶ justfile:1:7
+          │
+        1 │ x := x'$FOOOOOOOOOOOOOOOOOOOOOOOOOOOOO'
+          │       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      "
+    )
+    .failure();
 }
 
 #[test]
@@ -68,7 +67,7 @@ fn shell_expanded_strings_are_dumped_correctly() {
     .env("JUST_TEST_VARIABLE", "FOO")
     .args(["--dump"])
     .stdout("x := x'$JUST_TEST_VARIABLE'\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -85,7 +84,7 @@ fn shell_expanded_strings_can_be_used_in_settings() {
     .write(".env", "DOTENV_KEY=dotenv-value")
     .env("JUST_TEST_VARIABLE", ".env")
     .stdout("dotenv-value\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -98,10 +97,16 @@ fn shell_expanded_strings_can_be_used_in_import_paths() {
         foo: bar
       ",
     )
-    .write("import.just", "@bar:\n echo BAR")
+    .write(
+      "import.just",
+      "
+        @bar:
+         echo BAR
+      ",
+    )
     .env("JUST_TEST_VARIABLE", "import.just")
     .stdout("BAR\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -112,11 +117,17 @@ fn shell_expanded_strings_can_be_used_in_mod_paths() {
         mod foo x'$JUST_TEST_VARIABLE'
       ",
     )
-    .write("mod.just", "@bar:\n echo BAR")
+    .write(
+      "mod.just",
+      "
+        @bar:
+         echo BAR
+      ",
+    )
     .env("JUST_TEST_VARIABLE", "mod.just")
     .args(["foo", "bar"])
     .stdout("BAR\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -131,7 +142,7 @@ fn shell_expanded_strings_do_not_conflict_with_dependencies() {
     )
     .args(["bar", "A", "B"])
     .stdout("Ac\n")
-    .run();
+    .success();
 
   Test::new()
     .justfile(
@@ -143,7 +154,7 @@ fn shell_expanded_strings_do_not_conflict_with_dependencies() {
     )
     .args(["bar", "A", "B"])
     .stdout("Ac\n")
-    .run();
+    .success();
 
   Test::new()
     .justfile(
@@ -155,5 +166,5 @@ fn shell_expanded_strings_do_not_conflict_with_dependencies() {
     )
     .args(["bar", "A", "B"])
     .stdout("Ac\n")
-    .run();
+    .success();
 }

@@ -5,17 +5,17 @@ fn allow_duplicate_variables() {
   Test::new()
     .justfile(
       "
-      a := 'foo'
-      a := 'bar'
+        a := 'foo'
+        a := 'bar'
 
-      set allow-duplicate-variables
+        set allow-duplicate-variables
 
-      b:
-        echo {{a}}
+        b:
+          echo {{a}}
       ",
     )
     .arg("b")
     .stdout("bar\n")
     .stderr("echo bar\n")
-    .run();
+    .success();
 }

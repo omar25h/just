@@ -7,11 +7,33 @@ fn trailing_newlines_are_stripped() {
     .args(["--evaluate", "foos"])
     .justfile(
       "
-set shell := ['python3', '-c']
+        set shell := ['python3', '-c']
 
-foos := `print('foo' * 4)`
+        foos := `print('foo' * 4)`
       ",
     )
     .stdout("foofoofoofoo")
-    .run();
+    .success();
+}
+
+#[test]
+fn backtick_with_powershell() {
+  if !cfg!(windows) {
+    return;
+  }
+
+  Test::new()
+    .justfile(
+      "
+        set windows-shell := ['pwsh.exe', '-NoLogo', '-Command']
+
+        foo := `Write-Output bar`
+
+        default:
+          @echo {{foo}}
+      ",
+    )
+    .shell(false)
+    .stdout("bar\r\n")
+    .success();
 }

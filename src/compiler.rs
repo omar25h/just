@@ -4,38 +4,47 @@ pub(crate) struct Compiler;
 
 impl Compiler {
   pub(crate) fn compile<'src>(
+    config: &Config,
     loader: &'src Loader,
     root: &Path,
   ) -> RunResult<'src, Compilation<'src>> {
-    let mut asts = HashMap::<PathBuf, Ast>::new();
+    let mut asts = HashMap::<(Modulepath, PathBuf), Ast>::new();
     let mut loaded = Vec::new();
+    let mut numerator = Numerator::new();
     let mut paths = HashMap::<PathBuf, PathBuf>::new();
-    let mut srcs = HashMap::<PathBuf, &str>::new();
-
     let mut stack = Vec::new();
     stack.push(Source::root(root));
 
     while let Some(current) = stack.pop() {
-      if paths.contains_key(&current.path) {
+      let key = (
+        current
+          .namepath
+          .as_ref()
+          .map(Modulepath::from)
+          .unwrap_or_default(),
+        current.path.clone(),
+      );
+
+      if asts.contains_key(&key) {
         continue;
       }
 
-      let (relative, src) = loader.load(root, &current.path)?;
-      loaded.push(relative.into());
+      let (relative, src) = loader.load(config, root, &current.path)?;
 
-      let tokens = Lexer::lex(relative, src)?;
-      let mut ast = Parser::parse(
-        current.file_depth,
-        &current.import_offsets,
-        current.namepath.as_ref(),
-        &tokens,
-        &current.working_directory,
-      )?;
+      if paths
+        .insert(current.path.clone(), relative.into())
+        .is_none()
+      {
+        loaded.push(relative.into());
+      }
 
-      paths.insert(current.path.clone(), relative.into());
-      srcs.insert(current.path.clone(), src);
+      let mut ast = Parser::parse_source(&mut numerator, relative, &current, src)?;
 
       for item in &mut ast.items {
+        if !item.is_enabled() {
+          continue;
+        }
+
         match item {
           Item::Module {
             absolute,
@@ -70,16 +79,16 @@ impl Compiler {
             relative,
             absolute,
             optional,
-            path,
+            ..
           } => {
             let import = current
               .path
               .parent()
               .unwrap()
               .join(Self::expand_tilde(&relative.cooked)?)
-              .lexiclean();
+              .clean();
 
-            if import.is_file() {
+            if filesystem::is_file(&import)? {
               if current.file_path.contains(&import) {
                 return Err(Error::CircularImport {
                   current: current.path,
@@ -87,25 +96,58 @@ impl Compiler {
                 });
               }
               *absolute = Some(import.clone());
-              stack.push(current.import(import, path.offset));
+              stack.push(current.import(import, relative.token.offset));
             } else if !*optional {
-              return Err(Error::MissingImportFile { path: *path });
+              return Err(Error::MissingImportFile {
+                path: relative.token,
+              });
             }
           }
           _ => {}
         }
       }
 
-      asts.insert(current.path, ast.clone());
+      asts.insert(key, ast.clone());
     }
 
-    let justfile = Analyzer::analyze(&asts, None, &[], &loaded, None, &paths, root)?;
+    let mut overrides = HashMap::new();
+
+    let justfile = Analyzer::analyze(
+      &asts,
+      config,
+      None,
+      &[],
+      &loaded,
+      &Modulepath::default(),
+      None,
+      &mut overrides,
+      &paths,
+      false,
+      root,
+    )?;
+
+    let unknown_overrides = config
+      .overrides
+      .iter()
+      .filter(|((path, name), _value)| {
+        !justfile
+          .submodule(path)
+          .is_some_and(|module| module.assignments.contains_key(name))
+      })
+      .map(|((path, name), _value)| path.join(name).to_string())
+      .collect::<Vec<String>>();
+
+    if !unknown_overrides.is_empty() {
+      return Err(Error::UnknownOverrides {
+        overrides: unknown_overrides,
+      });
+    }
 
     Ok(Compilation {
       asts,
       justfile,
+      overrides,
       root: root.into(),
-      srcs,
     })
   }
 
@@ -119,7 +161,7 @@ impl Compiler {
     if let Some(path) = path {
       let full = parent.join(path);
 
-      if full.is_file() {
+      if filesystem::is_file(&full)? {
         return Ok(Some(full));
       }
 
@@ -140,7 +182,7 @@ impl Compiler {
     let mut grouped = BTreeMap::<PathBuf, Vec<(PathBuf, bool)>>::new();
 
     for (candidate, case_sensitive) in candidates {
-      let candidate = parent.join(candidate).lexiclean();
+      let candidate = parent.join(candidate).clean();
       grouped
         .entry(candidate.parent().unwrap().into())
         .or_default()
@@ -158,9 +200,9 @@ impl Compiler {
           }
 
           return Err(
-            SearchError::Io {
+            SearchError::FilesystemIo {
               io_error,
-              directory,
+              path: directory,
             }
             .into(),
           );
@@ -168,9 +210,9 @@ impl Compiler {
       };
 
       for entry in entries {
-        let entry = entry.map_err(|io_error| SearchError::Io {
+        let entry = entry.map_err(|io_error| SearchError::FilesystemIo {
           io_error,
-          directory: directory.clone(),
+          path: directory.clone(),
         })?;
 
         if let Some(name) = entry.file_name().to_str() {
@@ -201,7 +243,7 @@ impl Compiler {
         module,
       })
     } else {
-      Ok(found.into_iter().next())
+      Ok(found.pop())
     }
   }
 
@@ -218,74 +260,48 @@ impl Compiler {
   #[cfg(test)]
   pub(crate) fn test_compile(src: &str) -> CompileResult<Justfile> {
     let tokens = Lexer::test_lex(src)?;
-    let ast = Parser::parse(0, &[], None, &tokens, &PathBuf::new())?;
+    let ast = Parser::parse_tokens(&mut Numerator::new(), &tokens)?;
     let root = PathBuf::from("justfile");
-    let mut asts: HashMap<PathBuf, Ast> = HashMap::new();
-    asts.insert(root.clone(), ast);
+    let mut asts: HashMap<(Modulepath, PathBuf), Ast> = HashMap::new();
+    asts.insert((Modulepath::default(), root.clone()), ast);
     let mut paths: HashMap<PathBuf, PathBuf> = HashMap::new();
     paths.insert(root.clone(), root.clone());
-    Analyzer::analyze(&asts, None, &[], &[], None, &paths, &root)
+    Analyzer::analyze(
+      &asts,
+      &Config::new().unwrap(),
+      None,
+      &[],
+      &[],
+      &Modulepath::default(),
+      None,
+      &mut HashMap::new(),
+      &paths,
+      false,
+      &root,
+    )
   }
 }
 
 #[cfg(test)]
 mod tests {
-  use {super::*, temptree::temptree};
-
-  #[test]
-  fn include_justfile() {
-    let justfile_a = r#"
-# A comment at the top of the file
-import "./justfile_b"
-
-#some_recipe: recipe_b
-some_recipe:
-    echo "some recipe"
-"#;
-
-    let justfile_b = r#"import "./subdir/justfile_c"
-
-recipe_b: recipe_c
-    echo "recipe b"
-"#;
-
-    let justfile_c = r#"recipe_c:
-    echo "recipe c"
-"#;
-
-    let tmp = temptree! {
-        justfile: justfile_a,
-        justfile_b: justfile_b,
-        subdir: {
-            justfile_c: justfile_c
-        }
-    };
-
-    let loader = Loader::new();
-
-    let justfile_a_path = tmp.path().join("justfile");
-    let compilation = Compiler::compile(&loader, &justfile_a_path).unwrap();
-
-    assert_eq!(compilation.root_src(), justfile_a);
-  }
+  use super::*;
 
   #[test]
   fn recursive_includes_fail() {
-    let tmp = temptree! {
-      justfile: "import './subdir/b'\na: b",
-      subdir: {
-        b: "import '../justfile'\nb:"
-      }
-    };
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("justfile"), "import './subdir/b'\na: b").unwrap();
+    fs::create_dir_all(tmp.path().join("subdir")).unwrap();
+    fs::write(tmp.path().join("subdir/b"), "import '../justfile'\nb:").unwrap();
 
     let loader = Loader::new();
 
     let justfile_a_path = tmp.path().join("justfile");
-    let loader_output = Compiler::compile(&loader, &justfile_a_path).unwrap_err();
+    let loader_output =
+      Compiler::compile(&Config::new().unwrap(), &loader, &justfile_a_path).unwrap_err();
 
     assert_matches!(loader_output, Error::CircularImport { current, import }
-      if current == tmp.path().join("subdir").join("b").lexiclean() &&
-      import == tmp.path().join("justfile").lexiclean()
+      if current == tmp.path().join("subdir").join("b").clean() &&
+      import == tmp.path().join("justfile").clean()
     );
   }
 

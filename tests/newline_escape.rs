@@ -5,20 +5,20 @@ fn newline_escape_deps() {
   Test::new()
     .justfile(
       "
-      default: a \\
-               b \\
-               c
-      a:
-        echo a
-      b:
-        echo b
-      c:
-        echo c
-    ",
+        default: a \\
+                 b \\
+                 c
+        a:
+          echo a
+        b:
+          echo b
+        c:
+          echo c
+      ",
     )
     .stdout("a\nb\nc\n")
     .stderr("echo a\necho b\necho c\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -26,20 +26,20 @@ fn newline_escape_deps_no_indent() {
   Test::new()
     .justfile(
       "
-      default: a\\
-      b\\
-      c
-      a:
-        echo a
-      b:
-        echo b
-      c:
-        echo c
-    ",
+        default: a\\
+        b\\
+        c
+        a:
+          echo a
+        b:
+          echo b
+        c:
+          echo c
+      ",
     )
     .stdout("a\nb\nc\n")
     .stderr("echo a\necho b\necho c\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn newline_escape_deps_linefeed() {
     )
     .stdout("a\nb\n")
     .stderr("echo a\necho b\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -65,8 +65,8 @@ fn newline_escape_deps_invalid_esc() {
   Test::new()
     .justfile(
       "
-      default: a\\ b
-    ",
+        default: a\\ b
+      ",
     )
     .stderr(
       "
@@ -77,8 +77,7 @@ fn newline_escape_deps_invalid_esc() {
           │           ^
       ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -90,13 +89,12 @@ fn newline_escape_unpaired_linefeed() {
     )
     .stderr(
       "
-        error: Unpaired carriage return
+        error: unpaired carriage return
          ——▶ justfile:1:9
           │
         1 │ default:\\\ra
           │         ^
       ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }

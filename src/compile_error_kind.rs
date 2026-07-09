@@ -2,12 +2,44 @@ use super::*;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum CompileErrorKind<'src> {
+  ArgAttributeMinExceedsMax {
+    min: u64,
+    max: u64,
+  },
+  ArgAttributeRequiresMultipleOrVariadic {
+    key: Name<'src>,
+  },
+  ArgAttributeRequiresOption {
+    key: Name<'src>,
+  },
+  ArgumentCountParse {
+    key: Name<'src>,
+    value: String,
+    source: ParseIntError,
+  },
+  ArgumentCountValue {
+    key: Name<'src>,
+    value: String,
+  },
+  ArgumentPatternRegex {
+    source: regex::Error,
+  },
   AttributeArgumentCountMismatch {
-    attribute: &'src str,
+    attribute: Name<'src>,
     found: usize,
     min: usize,
     max: usize,
   },
+  AttributeArgumentExpression {
+    attribute: Name<'src>,
+  },
+  AttributeKeyMissingValue {
+    key: Name<'src>,
+  },
+  AttributeKeyTakesNoValue {
+    key: Name<'src>,
+  },
+  AttributePositionalFollowsKeyword,
   BacktickShebang,
   CircularRecipeDependency {
     recipe: &'src str,
@@ -17,15 +49,31 @@ pub(crate) enum CompileErrorKind<'src> {
     variable: &'src str,
     circle: Vec<&'src str>,
   },
+  ConstEval(ConstEvalError<'src>),
   DependencyArgumentCountMismatch {
     dependency: Namepath<'src>,
     found: usize,
     min: usize,
     max: usize,
   },
-  DuplicateAttribute {
-    attribute: &'src str,
+  DuplicateArgAttribute {
+    arg: String,
     first: usize,
+  },
+  DuplicateAttribute {
+    attribute: Name<'src>,
+    first: usize,
+  },
+  DuplicateAttributeKey {
+    attribute: &'src str,
+    key: &'src str,
+  },
+  DuplicateDefault {
+    recipe: &'src str,
+  },
+  DuplicateOption {
+    recipe: &'src str,
+    option: Switch,
   },
   DuplicateParameter {
     recipe: &'src str,
@@ -41,6 +89,7 @@ pub(crate) enum CompileErrorKind<'src> {
   DuplicateVariable {
     variable: &'src str,
   },
+  EscapeEndOfFile,
   ExitMessageAndNoExitMessageAttribute {
     recipe: &'src str,
   },
@@ -55,12 +104,26 @@ pub(crate) enum CompileErrorKind<'src> {
   ExtraneousAttributes {
     count: usize,
   },
-  FunctionArgumentCountMismatch {
-    function: &'src str,
-    found: usize,
-    expected: RangeInclusive<usize>,
+  FlagAndValueArgAttribute {
+    parameter: String,
   },
-  Include,
+  FlagAttributeTakesNoValue {
+    parameter: String,
+  },
+  FlagWithDefault {
+    parameter: String,
+  },
+  FunctionArgumentCountMismatch {
+    arguments: usize,
+    expected: RangeInclusive<usize>,
+    function: &'src str,
+  },
+  GuardAndInfallibleSigil,
+  IncompatibleSettings {
+    first: Keyword,
+    first_line: usize,
+    second: Keyword,
+  },
   InconsistentLeadingWhitespace {
     expected: &'src str,
     found: &'src str,
@@ -69,12 +132,34 @@ pub(crate) enum CompileErrorKind<'src> {
     message: String,
   },
   InvalidAttribute {
-    item_kind: &'static str,
+    item_kind: ItemKind,
     item_name: &'src str,
-    attribute: Attribute<'src>,
+    attribute: Box<Attribute<'src>>,
   },
   InvalidEscapeSequence {
     character: char,
+  },
+  InvalidIndentation {
+    message: &'static str,
+  },
+  InvalidMinimumVersion {
+    source: &'static str,
+    version: String,
+  },
+  InvalidShellRecipeAttribute {
+    attribute: Box<Attribute<'src>>,
+    recipe: &'src str,
+  },
+  InvalidSignal {
+    signal: String,
+  },
+  ListFeature(ListFeature),
+  MappedDependencyMultipleStarredArguments,
+  MappedDependencyWithoutListsSetting,
+  MappedDependencyWithoutStarredArgument,
+  MinimumVersion {
+    current: Version,
+    minimum: Version,
   },
   MismatchedClosingDelimiter {
     close: Delimiter,
@@ -87,24 +172,43 @@ pub(crate) enum CompileErrorKind<'src> {
   NoCdAndWorkingDirectoryAttribute {
     recipe: &'src str,
   },
+  OptionNameContainsEqualSign {
+    parameter: String,
+  },
+  OptionNameEmpty {
+    parameter: String,
+  },
   ParameterFollowsVariadicParameter {
     parameter: &'src str,
   },
   ParsingRecursionDepthExceeded,
   Redefinition {
     first: usize,
-    first_type: &'static str,
+    first_type: ItemKind,
     name: &'src str,
-    second_type: &'static str,
+    second_type: ItemKind,
   },
   RequiredParameterFollowsDefaultParameter {
     parameter: &'src str,
   },
-  ShebangAndScriptAttribute {
+  ScriptAndShellAttribute {
     recipe: &'src str,
+  },
+  SettingExpression {
+    setting: Keyword,
   },
   ShellExpansion {
     err: shellexpand::LookupError<env::VarError>,
+  },
+  ShortOptionWithMultipleCharacters {
+    parameter: String,
+  },
+  StarredArgumentOutsideMappedDependency,
+  UndefinedArgAttribute {
+    argument: String,
+  },
+  UndefinedFunction {
+    function: &'src str,
   },
   UndefinedVariable {
     variable: &'src str,
@@ -143,12 +247,13 @@ pub(crate) enum CompileErrorKind<'src> {
   UnknownAttribute {
     attribute: &'src str,
   },
+  UnknownAttributeKey {
+    attribute: &'src str,
+    key: &'src str,
+  },
   UnknownDependency {
     recipe: &'src str,
     unknown: Namepath<'src>,
-  },
-  UnknownFunction {
-    function: &'src str,
   },
   UnknownSetting {
     setting: &'src str,

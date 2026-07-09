@@ -1,4 +1,6 @@
-#[derive(Copy, Clone)]
+use super::*;
+
+#[derive(Copy, Clone, Serialize)]
 pub(crate) struct Shebang<'line> {
   pub(crate) argument: Option<&'line str>,
   pub(crate) interpreter: &'line str,
@@ -6,11 +8,8 @@ pub(crate) struct Shebang<'line> {
 
 impl<'line> Shebang<'line> {
   pub(crate) fn new(line: &'line str) -> Option<Self> {
-    if !line.starts_with("#!") {
-      return None;
-    }
-
-    let mut pieces = line[2..]
+    let mut pieces = line
+      .strip_prefix("#!")?
       .lines()
       .next()
       .unwrap_or("")
@@ -30,7 +29,7 @@ impl<'line> Shebang<'line> {
     })
   }
 
-  pub fn interpreter_filename(&self) -> &str {
+  pub(crate) fn interpreter_filename(&self) -> &str {
     self
       .interpreter
       .split(['/', '\\'])
@@ -138,14 +137,10 @@ mod tests {
   }
 
   #[test]
-  #[cfg(not(windows))]
-  fn include_shebang_line_other_not_windows() {
-    assert!(Shebang::new("#!foo -c").unwrap().include_shebang_line());
-  }
-
-  #[test]
-  #[cfg(windows)]
-  fn include_shebang_line_other_windows() {
-    assert!(!Shebang::new("#!foo -c").unwrap().include_shebang_line());
+  fn include_shebang_line_other() {
+    assert_eq!(
+      Shebang::new("#!foo -c").unwrap().include_shebang_line(),
+      !cfg!(windows),
+    );
   }
 }

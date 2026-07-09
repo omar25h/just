@@ -20,17 +20,14 @@ fn setting() {
   Test::new()
     .justfile(
       "
-      set tempdir := '.'
-      foo:
-          #!/usr/bin/env bash
-          cat just*/foo
+        set tempdir := '.'
+        foo:
+            #!/usr/bin/env bash
+            cat just*/foo
       ",
     )
     .shell(false)
-    .tree(tree! {
-      bar: {
-      }
-    })
+    .create_dir("bar")
     .current_dir("bar")
     .stdout(if cfg!(windows) {
       "
@@ -47,7 +44,7 @@ fn setting() {
       cat just*/foo
       "
     })
-    .run();
+    .success();
 }
 
 #[test]
@@ -56,17 +53,14 @@ fn argument_overrides_setting() {
     .args(["--tempdir", "."])
     .justfile(
       "
-      set tempdir := 'hello'
-      foo:
-          #!/usr/bin/env bash
-          cat just*/foo
+        set tempdir := 'hello'
+        foo:
+            #!/usr/bin/env bash
+            cat just*/foo
       ",
     )
     .shell(false)
-    .tree(tree! {
-      bar: {
-      }
-    })
+    .create_dir("bar")
     .current_dir("bar")
     .stdout(if cfg!(windows) {
       "
@@ -83,5 +77,5 @@ fn argument_overrides_setting() {
       cat just*/foo
       "
     })
-    .run();
+    .success();
 }

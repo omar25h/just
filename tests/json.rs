@@ -11,10 +11,11 @@ struct Alias<'a> {
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Assignment<'a> {
+  eager: bool,
   export: bool,
   name: &'a str,
   private: bool,
-  value: &'a str,
+  value: serde_json::Value,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -22,6 +23,7 @@ struct Assignment<'a> {
 struct Dependency<'a> {
   arguments: Vec<Value>,
   recipe: &'a str,
+  star: Option<usize>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -39,6 +41,7 @@ struct Module<'a> {
   doc: Option<&'a str>,
   first: Option<&'a str>,
   groups: Vec<&'a str>,
+  module_path: &'a str,
   modules: BTreeMap<&'a str, Module<'a>>,
   recipes: BTreeMap<&'a str, Recipe<'a>>,
   settings: Settings<'a>,
@@ -52,8 +55,17 @@ struct Module<'a> {
 struct Parameter<'a> {
   default: Option<&'a str>,
   export: bool,
+  flag: bool,
+  help: Option<&'a str>,
   kind: &'a str,
+  long: Option<&'a str>,
+  max: Option<u64>,
+  min: Option<u64>,
+  multiple: bool,
   name: &'a str,
+  pattern: Option<Vec<&'a str>>,
+  short: Option<char>,
+  value: Option<&'a str>,
 }
 
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -72,19 +84,34 @@ struct Recipe<'a> {
   shebang: bool,
 }
 
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+enum Dotenv<'a> {
+  Many(Vec<&'a str>),
+  One(&'a str),
+}
+
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Settings<'a> {
   allow_duplicate_recipes: bool,
   allow_duplicate_variables: bool,
-  dotenv_filename: Option<&'a str>,
+  default_list: bool,
+  default_script: bool,
+  dotenv_command: Vec<String>,
+  dotenv_filename: Option<Dotenv<'a>>,
   dotenv_load: bool,
   dotenv_override: bool,
-  dotenv_path: Option<&'a str>,
+  dotenv_path: Option<Dotenv<'a>>,
   dotenv_required: bool,
   export: bool,
   fallback: bool,
+  guards: bool,
   ignore_comments: bool,
+  indentation: Option<&'a str>,
+  lazy: bool,
+  lists: bool,
+  no_cd: bool,
   no_exit_message: bool,
   positional_arguments: bool,
   quiet: bool,
@@ -132,7 +159,7 @@ fn case_with_submodule(justfile: &str, submodule: Option<(&str, &str)>, mut expe
 
   fix_source(test.tempdir.path(), &mut expected);
 
-  let actual = test.run().stdout;
+  let actual = test.success().stdout;
 
   let actual: Module = serde_json::from_str(actual.as_str()).unwrap();
   pretty_assertions::assert_eq!(actual, expected);
@@ -180,7 +207,7 @@ fn assignment() {
         "foo",
         Assignment {
           name: "foo",
-          value: "bar",
+          value: "bar".into(),
           ..default()
         },
       )]
@@ -204,7 +231,7 @@ fn private_assignment() {
           "_foo",
           Assignment {
             name: "_foo",
-            value: "foo",
+            value: "foo".into(),
             private: true,
             ..default()
           },
@@ -213,7 +240,7 @@ fn private_assignment() {
           "bar",
           Assignment {
             name: "bar",
-            value: "bar",
+            value: "bar".into(),
             private: true,
             ..default()
           },
@@ -314,7 +341,7 @@ fn dependency_argument() {
         "x",
         Assignment {
           name: "x",
-          value: "foo",
+          value: "foo".into(),
           ..default()
         },
       )]
@@ -355,6 +382,7 @@ fn dependency_argument() {
                 json!(["call", "replace", "a", "b", "c"]),
               ]
               .into(),
+              star: None,
             }]
             .into(),
             priors: 1,
@@ -426,7 +454,7 @@ fn duplicate_variables() {
         "x",
         Assignment {
           name: "x",
-          value: "bar",
+          value: "bar".into(),
           ..default()
         },
       )]
@@ -668,12 +696,15 @@ fn settings() {
   case(
     "
       set allow-duplicate-recipes
+      set default-list
+      set default-script
       set dotenv-filename := \"filename\"
       set dotenv-load
       set dotenv-path := \"path\"
       set export
       set fallback
       set ignore-comments
+      set indentation := \"  \"
       set positional-arguments
       set quiet
       set shell := ['a', 'b', 'c']
@@ -695,12 +726,15 @@ fn settings() {
       .into(),
       settings: Settings {
         allow_duplicate_recipes: true,
-        dotenv_filename: Some("filename"),
-        dotenv_path: Some("path"),
+        default_list: true,
+        default_script: true,
+        dotenv_filename: Some(Dotenv::One("filename")),
+        dotenv_path: Some(Dotenv::One("path")),
         dotenv_load: true,
         export: true,
         fallback: true,
         ignore_comments: true,
+        indentation: Some("  "),
         positional_arguments: true,
         quiet: true,
         shell: Some(Interpreter {
@@ -712,6 +746,126 @@ fn settings() {
       ..default()
     },
   );
+}
+
+#[test]
+fn dotenv_filename_list() {
+  let test = Test::new()
+    .justfile(
+      "
+        set lists
+        set dotenv-filename := ['foo', 'bar']
+
+        foo:
+      ",
+    )
+    .unstable()
+    .args(["--dump", "--dump-format", "json"])
+    .stdout_regex(".*");
+
+  let mut expected = Module {
+    first: Some("foo"),
+    recipes: [(
+      "foo",
+      Recipe {
+        name: "foo",
+        namepath: "foo",
+        ..default()
+      },
+    )]
+    .into(),
+    settings: Settings {
+      dotenv_filename: Some(Dotenv::Many(vec!["foo", "bar"])),
+      lists: true,
+      ..default()
+    },
+    ..default()
+  };
+
+  fix_source(test.tempdir.path(), &mut expected);
+
+  let stdout = test.success().stdout;
+  let actual = serde_json::from_str::<Module>(&stdout).unwrap();
+
+  pretty_assertions::assert_eq!(actual, expected);
+}
+
+#[test]
+fn dotenv_command() {
+  let test = Test::new()
+    .justfile(
+      "
+        set dotenv-command := 'echo FOO=bar'
+
+        foo:
+      ",
+    )
+    .args(["--dump", "--dump-format", "json"])
+    .stdout_regex(".*");
+
+  let mut expected = Module {
+    first: Some("foo"),
+    recipes: [(
+      "foo",
+      Recipe {
+        name: "foo",
+        namepath: "foo",
+        ..default()
+      },
+    )]
+    .into(),
+    settings: Settings {
+      dotenv_command: vec!["echo FOO=bar".into()],
+      ..default()
+    },
+    ..default()
+  };
+
+  fix_source(test.tempdir.path(), &mut expected);
+
+  let stdout = test.success().stdout;
+  let actual = serde_json::from_str::<Module>(&stdout).unwrap();
+
+  pretty_assertions::assert_eq!(actual, expected);
+}
+
+#[test]
+fn list_concatenation() {
+  let test = Test::new()
+    .justfile(
+      "
+        set lists
+
+        foo := ['bar'] ++ ['baz']
+      ",
+    )
+    .unstable()
+    .args(["--dump", "--dump-format", "json"])
+    .stdout_regex(".*");
+
+  let mut expected = Module {
+    assignments: [(
+      "foo",
+      Assignment {
+        name: "foo",
+        value: json!(["list-concatenate", ["list", "bar"], ["list", "baz"]]),
+        ..default()
+      },
+    )]
+    .into(),
+    settings: Settings {
+      lists: true,
+      ..default()
+    },
+    ..default()
+  };
+
+  fix_source(test.tempdir.path(), &mut expected);
+
+  let stdout = test.success().stdout;
+  let actual = serde_json::from_str::<Module>(&stdout).unwrap();
+
+  pretty_assertions::assert_eq!(actual, expected);
 }
 
 #[test]
@@ -772,6 +926,54 @@ fn attribute() {
         "foo",
         Recipe {
           attributes: [json!("no-exit-message")].into(),
+          name: "foo",
+          namepath: "foo",
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn continue_attribute_default() {
+  case(
+    "
+      [continue]
+      foo:
+    ",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          attributes: [json!({"continue": []})].into(),
+          name: "foo",
+          namepath: "foo",
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn continue_attribute_signals() {
+  case(
+    "
+      [continue('SIGINT', 'SIGHUP')]
+      foo:
+    ",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          attributes: [json!({"continue": ["SIGHUP", "SIGINT"]})].into(),
           name: "foo",
           namepath: "foo",
           ..default()
@@ -879,6 +1081,41 @@ fn module() {
         Module {
           doc: Some("hello"),
           first: Some("bar"),
+          module_path: "foo",
+          source: "foo.just".into(),
+          recipes: [(
+            "bar",
+            Recipe {
+              name: "bar",
+              namepath: "foo::bar",
+              ..default()
+            },
+          )]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn module_doc_attribute_empty_string() {
+  case_with_submodule(
+    "
+      [doc('')]
+      mod foo
+    ",
+    Some(("foo.just", "bar:")),
+    Module {
+      modules: [(
+        "foo",
+        Module {
+          doc: Some(""),
+          first: Some("bar"),
+          module_path: "foo",
           source: "foo.just".into(),
           recipes: [(
             "bar",
@@ -912,6 +1149,7 @@ fn module_group() {
         Module {
           first: Some("bar"),
           groups: ["alpha"].into(),
+          module_path: "foo",
           source: "foo.just".into(),
           recipes: [(
             "bar",
@@ -973,6 +1211,361 @@ fn doc_attribute_overrides_comment() {
           doc: Some("ATTRIBUTE"),
           name: "foo",
           namepath: "foo",
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn format_string() {
+  case(
+    "
+      foo := f'abc'
+    ",
+    Module {
+      assignments: [(
+        "foo",
+        Assignment {
+          name: "foo",
+          value: json!(["format", "abc"]),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+  case(
+    "
+      foo := f'abc{{'bar'}}xyz'
+    ",
+    Module {
+      assignments: [(
+        "foo",
+        Assignment {
+          name: "foo",
+          value: json!(["format", "abc", "bar", "xyz"]),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+  case(
+    "
+      foo := f'abc{{'bar'}}xyz{{'baz' + 'buzz'}}123'
+    ",
+    Module {
+      assignments: [(
+        "foo",
+        Assignment {
+          name: "foo",
+          value: json!([
+            "format",
+            "abc",
+            "bar",
+            "xyz",
+            ["concatenate", "baz", "buzz"],
+            "123"
+          ]),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_pattern() {
+  case(
+    "[arg('bar', pattern='BAR')]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": null,
+              "long": null,
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": ["BAR"],
+              "short": null,
+              "value": null,
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            kind: "singular",
+            name: "bar",
+            pattern: Some(vec!["BAR"]),
+            ..default()
+          }]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_long() {
+  case(
+    "[arg('bar', long='BAR')]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": null,
+              "long": "BAR",
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": null,
+              "short": null,
+              "value": null,
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            kind: "singular",
+            name: "bar",
+            long: Some("BAR"),
+            ..default()
+          }]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_short() {
+  case(
+    "[arg('bar', short='B')]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": null,
+              "long": null,
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": null,
+              "short": "B",
+              "value": null,
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            kind: "singular",
+            name: "bar",
+            short: Some('B'),
+            ..default()
+          }]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_value() {
+  case(
+    "[arg('bar', short='B', value='hello')]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": null,
+              "long": null,
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": null,
+              "short": "B",
+              "value": "hello",
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            kind: "singular",
+            name: "bar",
+            short: Some('B'),
+            value: Some("hello"),
+            ..default()
+          }]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_flag() {
+  case(
+    "set unstable\nset lists\n[arg('bar', long, flag)]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": null,
+              "long": "bar",
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": null,
+              "short": null,
+              "value": null,
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            flag: true,
+            kind: "singular",
+            long: Some("bar"),
+            name: "bar",
+            ..default()
+          }]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      settings: Settings {
+        lists: true,
+        unstable: true,
+        ..default()
+      },
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_multiple() {
+  case(
+    "set unstable\nset lists\n[arg('bar', long, multiple)]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": null,
+              "long": "bar",
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": null,
+              "short": null,
+              "value": null,
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            kind: "singular",
+            long: Some("bar"),
+            multiple: true,
+            name: "bar",
+            ..default()
+          }]
+          .into(),
+          ..default()
+        },
+      )]
+      .into(),
+      settings: Settings {
+        lists: true,
+        unstable: true,
+        ..default()
+      },
+      ..default()
+    },
+  );
+}
+
+#[test]
+fn arg_help() {
+  case(
+    "[arg('bar', help='hello')]\nfoo bar:",
+    Module {
+      first: Some("foo"),
+      recipes: [(
+        "foo",
+        Recipe {
+          name: "foo",
+          namepath: "foo",
+          attributes: [json!({
+            "arg": {
+              "help": "hello",
+              "long": null,
+              "max": null,
+              "min": null,
+              "name": "bar",
+              "pattern": null,
+              "short": null,
+              "value": null,
+            }
+          })]
+          .into(),
+          parameters: [Parameter {
+            help: Some("hello"),
+            kind: "singular",
+            name: "bar",
+            ..default()
+          }]
+          .into(),
           ..default()
         },
       )]

@@ -7,13 +7,12 @@ fn confirm_recipe_arg() {
     .justfile(
       "
         [confirm]
-        requires_confirmation:
-            echo confirmed
-        ",
+        @foo:
+          echo FOO
+      ",
     )
-    .stderr("echo confirmed\n")
-    .stdout("confirmed\n")
-    .run();
+    .stdout("FOO\n")
+    .success();
 }
 
 #[test]
@@ -22,17 +21,16 @@ fn recipe_with_confirm_recipe_dependency_arg() {
     .arg("--yes")
     .justfile(
       "
-        dep_confirmation: requires_confirmation
-            echo confirmed2
+        @bar: foo
+          echo BAR
 
         [confirm]
-        requires_confirmation:
-            echo confirmed
-        ",
+        @foo:
+          echo FOO
+      ",
     )
-    .stderr("echo confirmed\necho confirmed2\n")
-    .stdout("confirmed\nconfirmed2\n")
-    .run();
+    .stdout("FOO\nBAR\n")
+    .success();
 }
 
 #[test]
@@ -41,14 +39,14 @@ fn confirm_recipe() {
     .justfile(
       "
         [confirm]
-        requires_confirmation:
-            echo confirmed
-        ",
+        @foo:
+          echo FOO
+      ",
     )
-    .stderr("Run recipe `requires_confirmation`? echo confirmed\n")
-    .stdout("confirmed\n")
+    .stderr("Run recipe `foo`? ")
+    .stdout("FOO\n")
     .stdin("y")
-    .run();
+    .success();
 }
 
 #[test]
@@ -56,18 +54,18 @@ fn recipe_with_confirm_recipe_dependency() {
   Test::new()
     .justfile(
       "
-        dep_confirmation: requires_confirmation
-            echo confirmed2
+        @bar: foo
+          echo BAR
 
         [confirm]
-        requires_confirmation:
-            echo confirmed
-        ",
+        @foo:
+          echo FOO
+      ",
     )
-    .stderr("Run recipe `requires_confirmation`? echo confirmed\necho confirmed2\n")
-    .stdout("confirmed\nconfirmed2\n")
+    .stderr("Run recipe `foo`? ")
+    .stdout("FOO\nBAR\n")
     .stdin("y")
-    .run();
+    .success();
 }
 
 #[test]
@@ -76,13 +74,12 @@ fn do_not_confirm_recipe() {
     .justfile(
       "
         [confirm]
-        requires_confirmation:
-            echo confirmed
-        ",
+        @foo:
+          echo FOO
+      ",
     )
-    .stderr("Run recipe `requires_confirmation`? error: Recipe `requires_confirmation` was not confirmed\n")
-    .status(1)
-    .run();
+    .stderr("Run recipe `foo`? error: recipe `foo` was not confirmed\n")
+    .failure();
 }
 
 #[test]
@@ -90,17 +87,16 @@ fn do_not_confirm_recipe_with_confirm_recipe_dependency() {
   Test::new()
     .justfile(
       "
-        dep_confirmation: requires_confirmation
-            echo mistake
+        bar: foo
+          echo BAR
 
         [confirm]
-        requires_confirmation:
-            echo confirmed
-        ",
+        @foo:
+          echo FOO
+      ",
     )
-    .stderr("Run recipe `requires_confirmation`? error: Recipe `requires_confirmation` was not confirmed\n")
-    .status(1)
-    .run();
+    .stderr("Run recipe `foo`? error: recipe `foo` was not confirmed\n")
+    .failure();
 }
 
 #[test]
@@ -108,38 +104,36 @@ fn confirm_recipe_with_prompt() {
   Test::new()
     .justfile(
       "
-        [confirm(\"This is dangerous - are you sure you want to run it?\")]
-        requires_confirmation:
-            echo confirmed
-        ",
+        [confirm('Sure?')]
+        @foo:
+            echo FOO
+      ",
     )
-    .stderr("This is dangerous - are you sure you want to run it? echo confirmed\n")
-    .stdout("confirmed\n")
+    .stderr("Sure? ")
+    .stdout("FOO\n")
     .stdin("y")
-    .run();
+    .success();
 }
 
 #[test]
 fn confirm_recipe_with_prompt_too_many_args() {
   Test::new()
     .justfile(
-      r#"
-        [confirm("PROMPT","EXTRA")]
-        requires_confirmation:
-            echo confirmed
-      "#,
+      "
+        [confirm('A', 'B')]
+        foo:
+      ",
     )
     .stderr(
-      r#"
-        error: Attribute `confirm` got 2 arguments but takes at most 1 argument
+      "
+        error: attribute `confirm` got 2 arguments but takes at most 1 argument
          ——▶ justfile:1:2
           │
-        1 │ [confirm("PROMPT","EXTRA")]
+        1 │ [confirm('A', 'B')]
           │  ^^^^^^^
-      "#,
+      ",
     )
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -152,6 +146,107 @@ fn confirm_attribute_is_formatted_correctly() {
       ",
     )
     .arg("--dump")
-    .stdout("[confirm('prompt')]\nfoo:\n")
-    .run();
+    .stdout(
+      "
+        [confirm('prompt')]
+        foo:
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn confirm_with_expression() {
+  Test::new()
+    .justfile(
+      "
+        target := 'production'
+
+        [confirm('Deploy to ' + target + '?')]
+        deploy:
+            echo deployed
+      ",
+    )
+    .stdin("y")
+    .stderr("Deploy to production? echo deployed\n")
+    .stdout("deployed\n")
+    .success();
+}
+
+#[test]
+fn confirm_with_recipe_parameter() {
+  Test::new()
+    .justfile(
+      "
+        [confirm('Deploy to ' + target + '?')]
+        deploy target:
+            echo 'deployed to {{target}}'
+      ",
+    )
+    .args(["deploy", "staging"])
+    .stdin("y")
+    .stderr("Deploy to staging? echo 'deployed to staging'\n")
+    .stdout("deployed to staging\n")
+    .success();
+}
+
+#[test]
+fn confirm_expression_dump() {
+  Test::new()
+    .justfile(
+      "
+        target := 'production'
+
+        [confirm('Deploy to ' + target + '?')]
+        deploy:
+            echo deployed
+      ",
+    )
+    .arg("--dump")
+    .stdout(
+      "
+        target := 'production'
+
+        [confirm('Deploy to ' + target + '?')]
+        deploy:
+            echo deployed
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn confirm_expression_is_dependency_is_false_for_direct_invocation() {
+  Test::new()
+    .justfile(
+      "
+        [confirm(if is_dependency() == 'true' { 'dep?' } else { 'direct?' })]
+        foo:
+            @echo ran
+      ",
+    )
+    .arg("foo")
+    .stdin("y\n")
+    .stderr("direct? ")
+    .stdout("ran\n")
+    .success();
+}
+
+#[test]
+fn confirm_expression_is_dependency_is_true_for_dependency_invocation() {
+  Test::new()
+    .justfile(
+      "
+        [confirm(if is_dependency() == 'true' { 'dep?' } else { 'direct?' })]
+        foo:
+            @echo ran
+
+        bar: foo
+      ",
+    )
+    .arg("bar")
+    .stdin("y\n")
+    .stderr("dep? ")
+    .stdout("ran\n")
+    .success();
 }

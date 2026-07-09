@@ -5,19 +5,19 @@ fn match_succeeds_evaluates_to_first_branch() {
   Test::new()
     .justfile(
       "
-      foo := if 'abbbc' =~ 'ab+c' {
-        'yes'
-      } else {
-        'no'
-      }
+        foo := if 'abbbc' =~ 'ab+c' {
+          'yes'
+        } else {
+          'no'
+        }
 
-      default:
-        echo {{ foo }}
-    ",
+        default:
+          echo {{ foo }}
+      ",
     )
     .stderr("echo yes\n")
     .stdout("yes\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -25,19 +25,19 @@ fn match_fails_evaluates_to_second_branch() {
   Test::new()
     .justfile(
       "
-      foo := if 'abbbc' =~ 'ab{4}c' {
-        'yes'
-      } else {
-        'no'
-      }
+        foo := if 'abbbc' =~ 'ab{4}c' {
+          'yes'
+        } else {
+          'no'
+        }
 
-      default:
-        echo {{ foo }}
-    ",
+        default:
+          echo {{ foo }}
+      ",
     )
     .stderr("echo no\n")
     .stdout("no\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -58,11 +58,14 @@ fn bad_regex_fails_at_runtime() {
             (
             ^
         error: unclosed group
+         ——▶ justfile:3:17
+          │
+        3 │   echo {{ if '' =~ '(' { 'a' } else { 'b' } }}
+          │                 ^^
       ",
     )
     .stdout("before\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -70,22 +73,22 @@ fn mismatch() {
   Test::new()
     .justfile(
       "
-      foo := if 'Foo' !~ '^ab+c' {
-        'mismatch'
-      } else {
-        'match'
-      }
+        foo := if 'Foo' !~ '^ab+c' {
+          'mismatch'
+        } else {
+          'match'
+        }
 
-      bar := if 'Foo' !~ 'Foo' {
-        'mismatch'
-      } else {
-        'match'
-      }
+        bar := if 'Foo' !~ 'Foo' {
+          'mismatch'
+        } else {
+          'match'
+        }
 
-      @default:
-        echo {{ foo }} {{ bar }}
-    ",
+        @default:
+          echo {{ foo }} {{ bar }}
+      ",
     )
     .stdout("mismatch match\n")
-    .run();
+    .success();
 }

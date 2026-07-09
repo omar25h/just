@@ -13,10 +13,9 @@ recipe default=`DEFAULT`:
 #[test]
 #[cfg_attr(windows, ignore)]
 fn flag() {
-  let tmp = temptree! {
-    justfile: JUSTFILE,
-    shell: "#!/usr/bin/env bash\necho \"$@\"",
-  };
+  let tmp = tempdir();
+  fs::write(tmp.path().join("justfile"), JUSTFILE).unwrap();
+  fs::write(tmp.path().join("shell"), "#!/usr/bin/env bash\necho \"$@\"").unwrap();
 
   let shell = tmp.path().join("shell");
 
@@ -26,7 +25,7 @@ fn flag() {
     fs::set_permissions(&shell, permissions).unwrap();
   }
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("--shell")
     .arg(shell)
@@ -39,10 +38,14 @@ fn flag() {
 
 /// Test that we can use `set shell` to use cmd.exe on windows
 #[test]
-#[cfg(windows)]
 fn cmd() {
-  let tmp = temptree! {
-    justfile: r#"
+  if cfg!(not(windows)) {
+    return;
+  }
+  let tmp = tempdir();
+  fs::write(
+    tmp.path().join("justfile"),
+    r#"
 
 set shell := ["cmd.exe", "/C"]
 
@@ -52,12 +55,10 @@ recipe:
   REM foo
   Echo "{{x}}"
 "#,
-  };
+  )
+  .unwrap();
 
-  let output = Command::new(executable_path("just"))
-    .current_dir(tmp.path())
-    .output()
-    .unwrap();
+  let output = Command::new(JUST).current_dir(tmp.path()).output().unwrap();
 
   let stdout = "\\\"ECHO is on.\\\"\r\n";
 
@@ -66,10 +67,14 @@ recipe:
 
 /// Test that we can use `set shell` to use cmd.exe on windows
 #[test]
-#[cfg(windows)]
 fn powershell() {
-  let tmp = temptree! {
-      justfile: r#"
+  if cfg!(not(windows)) {
+    return;
+  }
+  let tmp = tempdir();
+  fs::write(
+    tmp.path().join("justfile"),
+    r#"
 
 set shell := ["powershell.exe", "-c"]
 
@@ -78,14 +83,11 @@ x := `Write-Host "Hello, world!"`
 recipe:
   For ($i=0; $i -le 10; $i++) { Write-Host $i }
   Write-Host "{{x}}"
-"#
-  ,
-    };
+"#,
+  )
+  .unwrap();
 
-  let output = Command::new(executable_path("just"))
-    .current_dir(tmp.path())
-    .output()
-    .unwrap();
+  let output = Command::new(JUST).current_dir(tmp.path()).output().unwrap();
 
   let stdout = "0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\nHello, world!\n";
 
@@ -99,14 +101,14 @@ fn shell_args() {
     .arg("-c")
     .justfile(
       "
-    default:
-      echo A${foo}A
-  ",
+        default:
+          echo A${foo}A
+      ",
     )
     .shell(false)
     .stdout("AA\n")
     .stderr("echo A${foo}A\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -116,16 +118,16 @@ fn shell_override() {
     .arg("bash")
     .justfile(
       "
-    set shell := ['foo-bar-baz']
+        set shell := ['foo-bar-baz']
 
-    default:
-      echo hello
-  ",
+        default:
+          echo hello
+      ",
     )
     .shell(false)
     .stdout("hello\n")
     .stderr("echo hello\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -135,16 +137,16 @@ fn shell_arg_override() {
     .arg("-cu")
     .justfile(
       "
-    set shell := ['foo-bar-baz']
+        set shell := ['foo-bar-baz']
 
-    default:
-      echo hello
-  ",
+        default:
+          echo hello
+      ",
     )
     .stdout("hello\n")
     .stderr("echo hello\n")
     .shell(false)
-    .run();
+    .success();
 }
 
 #[test]
@@ -152,19 +154,19 @@ fn set_shell() {
   Test::new()
     .justfile(
       "
-    set shell := ['echo', '-n']
+        set shell := ['echo', '-n']
 
-    x := `bar`
+        x := `bar`
 
-    foo:
-      echo {{x}}
-      echo foo
-  ",
+        foo:
+          echo {{x}}
+          echo foo
+      ",
     )
     .stdout("echo barecho foo")
     .stderr("echo bar\necho foo\n")
     .shell(false)
-    .run();
+    .success();
 }
 
 #[test]
@@ -179,10 +181,10 @@ fn recipe_shell_not_found_error_message() {
     .shell(false)
     .args(["--shell", "NOT_A_REAL_SHELL"])
     .stderr_regex(
-      "error: Recipe `foo` could not be run because just could not find the shell: .*\n",
+      "error: recipe `foo` could not be run because just could not find the shell \
+      `NOT_A_REAL_SHELL`: .*\n",
     )
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -198,7 +200,6 @@ fn backtick_recipe_shell_not_found_error_message() {
     )
     .shell(false)
     .args(["--shell", "NOT_A_REAL_SHELL"])
-    .stderr_regex("(?s)error: Backtick could not be run because just could not find the shell:.*")
-    .status(1)
-    .run();
+    .stderr_regex("(?s)error: backtick could not be run because just could not find the shell:.*")
+    .failure();
 }

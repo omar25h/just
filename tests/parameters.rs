@@ -11,7 +11,7 @@ fn parameter_default_values_may_use_earlier_parameters() {
     )
     .args(["foo", "bar"])
     .stdout("bar\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -26,15 +26,14 @@ fn parameter_default_values_may_not_use_later_parameters() {
     .args(["foo", "bar"])
     .stderr(
       "
-        error: Variable `c` not defined
+        error: variable `c` not defined
          ——▶ justfile:1:10
           │
         1 │ @foo a b=c c='':
           │          ^
       ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -48,5 +47,80 @@ fn star_may_follow_default() {
     )
     .args(["foo", "hello", "goodbye"])
     .stdout("hello goodbye\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn variadic_arguments_are_joined_when_passed_to_functions() {
+  Test::new()
+    .justfile(
+      "
+        foo *args:
+          @printf '%s\\n' {{ quote(args) }}
+      ",
+    )
+    .args(["foo", "bar", "baz bob"])
+    .stdout("bar baz bob\n")
+    .success();
+}
+
+#[test]
+fn empty_star_parameter_is_equal_to_empty_string() {
+  Test::new()
+    .justfile(
+      "
+        foo *args:
+          @echo {{ if args == '' { 'empty' } else { 'nonempty' } }}
+      ",
+    )
+    .args(["foo"])
+    .stdout("empty\n")
+    .success();
+}
+
+#[test]
+fn empty_star_parameter_is_falsy() {
+  Test::new()
+    .justfile(
+      "
+        set lists
+
+        foo *args:
+          @echo {{ args || 'fallback' }}
+      ",
+    )
+    .unstable()
+    .args(["foo"])
+    .stdout("fallback\n")
+    .success();
+}
+
+#[test]
+fn exported_variadic_parameter_is_joined_with_spaces() {
+  Test::new()
+    .justfile(
+      "
+        foo +$args:
+          @echo $args
+      ",
+    )
+    .args(["foo", "bar", "baz"])
+    .stdout("bar baz\n")
+    .success();
+}
+
+#[test]
+fn variadic_parameter_passed_to_dependency_is_joined_with_spaces() {
+  Test::new()
+    .justfile(
+      "
+        foo *args: (bar args)
+
+        bar first *rest:
+          @echo first={{ quote(first) }} rest={{ quote(rest) }}
+      ",
+    )
+    .args(["foo", "bar", "baz"])
+    .stdout("first=bar baz rest=\n")
+    .success();
 }

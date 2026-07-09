@@ -1,28 +1,45 @@
 use {super::*, serde::Serialize};
 
-#[derive(Debug)]
-struct Invocation<'src: 'run, 'run> {
-  arguments: Vec<&'run str>,
-  recipe: &'run Recipe<'src>,
-}
+type Scopes<'src, 'run> = BTreeMap<
+  Modulepath,
+  (
+    &'run Justfile<'src>,
+    &'run Scope<'src, 'run>,
+    &'run BTreeMap<String, String>,
+  ),
+>;
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(crate) struct Justfile<'src> {
-  pub(crate) aliases: Table<'src, Alias<'src>>,
+  #[serde(skip)]
+  pub(crate) absent_modules: BTreeSet<String>,
   pub(crate) assignments: Table<'src, Assignment<'src>>,
   #[serde(rename = "first", serialize_with = "keyed::serialize_option")]
   pub(crate) default: Option<Arc<Recipe<'src>>>,
+  #[serde(skip)]
+  pub(crate) disabled_aliases: Table<'src, Disabled<'src>>,
+  #[serde(skip)]
+  pub(crate) disabled_recipes: Table<'src, Disabled<'src>>,
   pub(crate) doc: Option<String>,
-  pub(crate) groups: Vec<String>,
+  #[serde(skip)]
+  pub(crate) evaluation_order: Vec<Name<'src>>,
+  #[serde(skip)]
+  pub(crate) functions: Table<'src, FunctionDefinition<'src>>,
+  pub(crate) groups: Vec<StringLiteral<'src>>,
   #[serde(skip)]
   pub(crate) loaded: Vec<PathBuf>,
   #[serde(skip)]
-  pub(crate) module_path: String,
-  pub(crate) modules: Table<'src, Justfile<'src>>,
+  pub(crate) module_aliases: Table<'src, ModuleAlias<'src>>,
+  pub(crate) module_path: Modulepath,
+  pub(crate) modules: Table<'src, Self>,
   #[serde(skip)]
   pub(crate) name: Option<Name<'src>>,
+  #[serde(skip)]
+  pub(crate) private: bool,
+  #[serde(rename = "aliases")]
+  pub(crate) recipe_aliases: Table<'src, RecipeAlias<'src>>,
   pub(crate) recipes: Table<'src, Arc<Recipe<'src>>>,
-  pub(crate) settings: Settings<'src>,
+  pub(crate) settings: Settings,
   pub(crate) source: PathBuf,
   pub(crate) unexports: HashSet<String>,
   #[serde(skip)]
@@ -38,7 +55,7 @@ impl<'src> Justfile<'src> {
     candidates: impl Iterator<Item = Suggestion<'src>>,
   ) -> Option<Suggestion<'src>> {
     candidates
-      .map(|suggestion| (edit_distance(input, suggestion.name), suggestion))
+      .map(|suggestion| (strsim::levenshtein(input, suggestion.name), suggestion))
       .filter(|(distance, _suggestion)| *distance < 3)
       .min_by_key(|(distance, _suggestion)| *distance)
       .map(|(_distance, suggestion)| suggestion)
@@ -49,49 +66,109 @@ impl<'src> Justfile<'src> {
       input,
       self
         .recipes
-        .keys()
-        .map(|name| Suggestion { name, target: None })
-        .chain(self.aliases.iter().map(|(name, alias)| Suggestion {
-          name,
-          target: Some(alias.target.name.lexeme()),
-        })),
+        .values()
+        .filter(|recipe| recipe.is_public())
+        .map(|recipe| Suggestion {
+          name: recipe.name(),
+          target: None,
+        })
+        .chain(
+          self
+            .recipe_aliases
+            .values()
+            .filter(|alias| alias.is_public())
+            .map(|alias| Suggestion {
+              name: alias.name.lexeme(),
+              target: Some(alias.target.name.lexeme()),
+            }),
+        ),
     )
   }
 
-  pub(crate) fn suggest_variable(&self, input: &str) -> Option<Suggestion<'src>> {
+  pub(crate) fn suggest_submodule(&self, input: &str) -> Option<Suggestion<'src>> {
+    Self::find_suggestion(
+      input,
+      self
+        .modules
+        .keys()
+        .map(|name| Suggestion { name, target: None }),
+    )
+  }
+
+  pub(crate) fn suggest_variable_or_submodule(&self, input: &str) -> Option<Suggestion<'src>> {
     Self::find_suggestion(
       input,
       self
         .assignments
         .keys()
+        .chain(self.modules.keys())
         .map(|name| Suggestion { name, target: None }),
     )
   }
 
   fn evaluate_scopes<'run>(
     &'run self,
-    arena: &'run Arena<Scope<'src, 'run>>,
     config: &'run Config,
-    dotenv: &'run BTreeMap<String, String>,
-    overrides: &BTreeMap<String, String>,
+    dotenv_arena: &'run Arena<BTreeMap<String, String>>,
+    overrides: &'run HashMap<Number, String>,
+    parent_dotenv: Option<&'run BTreeMap<String, String>>,
+    lazy: bool,
     root: &'run Scope<'src, 'run>,
-    scopes: &mut BTreeMap<String, (&'run Justfile<'src>, &'run Scope<'src, 'run>)>,
+    scope_arena: &'run Arena<Scope<'src, 'run>>,
+    scopes: &mut Scopes<'src, 'run>,
     search: &'run Search,
+    variable_references: &HashSet<Number>,
   ) -> RunResult<'src> {
-    let scope = Evaluator::evaluate_assignments(config, dotenv, self, overrides, root, search)?;
+    let dotenv = if config.load_dotenv {
+      let working_directory = if self.is_submodule() {
+        &self.working_directory
+      } else {
+        &search.working_directory
+      };
+      load_dotenv(config, &self.settings, working_directory)?
+    } else {
+      BTreeMap::new()
+    };
 
-    let scope = arena.alloc(scope);
-    scopes.insert(self.module_path.clone(), (self, scope));
+    let dotenv = if let Some(parent_dotenv) = parent_dotenv {
+      parent_dotenv
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .chain(dotenv)
+        .collect()
+    } else {
+      dotenv
+    };
+
+    let dotenv = dotenv_arena.alloc(dotenv);
+
+    let lazy = lazy || self.settings.lazy;
+
+    let scope = Evaluator::evaluate_assignments(
+      config,
+      dotenv,
+      self,
+      overrides,
+      root,
+      search,
+      lazy.then_some(variable_references),
+    )?;
+
+    let scope = scope_arena.alloc(scope);
+    scopes.insert(self.module_path.clone(), (self, scope, dotenv));
 
     for module in self.modules.values() {
       module.evaluate_scopes(
-        arena,
         config,
-        dotenv,
-        &BTreeMap::new(),
+        dotenv_arena,
+        overrides,
+        Some(dotenv),
+        lazy,
         scope,
+        scope_arena,
         scopes,
         search,
+        variable_references,
       )?;
     }
 
@@ -102,43 +179,79 @@ impl<'src> Justfile<'src> {
     &self,
     config: &Config,
     search: &Search,
-    overrides: &BTreeMap<String, String>,
     arguments: &[String],
+    overrides: &HashMap<Number, String>,
   ) -> RunResult<'src> {
-    let unknown_overrides = overrides
-      .keys()
-      .filter(|name| !self.assignments.contains_key(name.as_str()))
-      .cloned()
-      .collect::<Vec<String>>();
-
-    if !unknown_overrides.is_empty() {
-      return Err(Error::UnknownOverrides {
-        overrides: unknown_overrides,
-      });
-    }
-
-    let dotenv = if config.load_dotenv {
-      load_dotenv(config, &self.settings, &search.working_directory)?
-    } else {
-      BTreeMap::new()
-    };
-
     let root = Scope::root();
-    let arena = Arena::new();
+    let dotenv_arena = Arena::new();
+    let scope_arena = Arena::new();
     let mut scopes = BTreeMap::new();
-    self.evaluate_scopes(
-      &arena,
-      config,
-      &dotenv,
-      overrides,
-      &root,
-      &mut scopes,
-      search,
-    )?;
-
-    let scope = scopes.get(&self.module_path).unwrap().1;
 
     match &config.subcommand {
+      Subcommand::Choose { .. } | Subcommand::Run { .. } => {
+        let arguments = arguments.iter().map(String::as_str).collect::<Vec<&str>>();
+
+        let invocations = InvocationParser::parse_invocations(self, &arguments)?;
+
+        if config.one && invocations.len() > 1 {
+          return Err(Error::ExcessInvocations {
+            invocations: invocations.len(),
+          });
+        }
+
+        let mut variable_references = HashSet::new();
+
+        let mut stack = Vec::new();
+        let mut visited = HashSet::new();
+
+        for invocation in &invocations {
+          if visited.insert(invocation.recipe.number) {
+            stack.push(invocation.recipe);
+          }
+        }
+
+        while let Some(recipe) = stack.pop() {
+          variable_references.extend(&recipe.variable_references);
+          for dependency in &recipe.dependencies {
+            if visited.insert(dependency.recipe.number) {
+              stack.push(&dependency.recipe);
+            }
+          }
+        }
+
+        self.evaluate_scopes(
+          config,
+          &dotenv_arena,
+          overrides,
+          None,
+          false,
+          &root,
+          &scope_arena,
+          &mut scopes,
+          search,
+          &variable_references,
+        )?;
+
+        let ran = Ran::new();
+        let cache = Cache::new(search);
+        let jobs = Semaphore::new(config.jobs.unwrap_or(NonZeroU64::MAX));
+        for invocation in invocations {
+          Self::run_recipe(
+            &invocation.arguments,
+            config,
+            false,
+            overrides,
+            &ran,
+            invocation.recipe,
+            &scopes,
+            search,
+            &cache,
+            &jobs,
+          )?;
+        }
+
+        Ok(())
+      }
       Subcommand::Command {
         binary, arguments, ..
       } => {
@@ -147,16 +260,32 @@ impl<'src> Justfile<'src> {
           command.arg(binary);
           command
         } else {
-          Command::new(binary)
+          Command::resolve(binary)
         };
 
         command
           .args(arguments)
           .current_dir(&search.working_directory);
 
+        self.evaluate_scopes(
+          config,
+          &dotenv_arena,
+          overrides,
+          None,
+          true,
+          &root,
+          &scope_arena,
+          &mut scopes,
+          search,
+          &HashSet::new(),
+        )?;
+
+        let (_module, scope, dotenv) = scopes.get(&self.module_path).unwrap();
         let scope = scope.child();
 
-        command.export(&self.settings, &dotenv, &scope, &self.unexports);
+        let environment = Environment::new(dotenv, &scope, &self.settings, &self.unexports);
+
+        environment.export(&mut command);
 
         let (result, caught) = command.status_guard();
 
@@ -178,78 +307,131 @@ impl<'src> Justfile<'src> {
           return Err(Error::Interrupted { signal });
         }
 
-        return Ok(());
+        Ok(())
       }
-      Subcommand::Evaluate { variable, .. } => {
-        if let Some(variable) = variable {
-          if let Some(value) = scope.value(variable) {
-            print!("{value}");
-          } else {
-            return Err(Error::EvalUnknownVariable {
-              suggestion: self.suggest_variable(variable),
-              variable: variable.clone(),
-            });
-          }
-        } else {
-          let width = scope.names().fold(0, |max, name| name.len().max(max));
+      Subcommand::Evaluate { format, path } => {
+        let (module, variable, variable_references) = self.evaluation_target(path)?;
 
-          for binding in scope.bindings() {
-            if !binding.private {
-              println!(
-                "{0:1$} := \"{2}\"",
-                binding.name.lexeme(),
-                width,
-                binding.value
-              );
+        self.evaluate_scopes(
+          config,
+          &dotenv_arena,
+          overrides,
+          None,
+          true,
+          &root,
+          &scope_arena,
+          &mut scopes,
+          search,
+          &variable_references,
+        )?;
+
+        let scope = scopes.get(&module.module_path).unwrap().1;
+
+        if let Some(assignment) = variable {
+          print!("{}", scope.value(assignment.number).unwrap().join());
+        } else {
+          let mut bindings = scope
+            .bindings()
+            .filter(|binding| !binding.private)
+            .collect::<Vec<&Binding>>();
+
+          bindings.sort_by_key(|binding| binding.name.lexeme());
+
+          let width = bindings
+            .iter()
+            .fold(0, |max, binding| binding.name.lexeme().len().max(max));
+
+          for binding in bindings {
+            match format {
+              EvaluateFormat::Just => {
+                println!(
+                  "{0:1$} := {2}",
+                  binding.name,
+                  width,
+                  binding.value.color_display(config.color.stdout()),
+                );
+              }
+              EvaluateFormat::Shell => {
+                if binding.export || module.settings.export {
+                  print!("export ");
+                }
+                print!("{}=\"", binding.name.lexeme().replace('-', "_"));
+                for c in binding.value.join().chars() {
+                  if matches!(c, '!' | '"' | '$' | '\\' | '`') {
+                    print!("\\");
+                  }
+                  print!("{c}");
+                }
+                println!("\"");
+              }
             }
           }
         }
 
-        return Ok(());
+        Ok(())
       }
-      _ => {}
+      _ => unreachable!(),
+    }
+  }
+
+  pub(crate) fn evaluation_target<'a>(
+    &'a self,
+    path: &'a Modulepath,
+  ) -> RunResult<
+    'src,
+    (
+      &'a Justfile<'a>,
+      Option<&'a Assignment<'a>>,
+      HashSet<Number>,
+    ),
+  > {
+    let mut current = self;
+
+    let mut variable = None;
+
+    for (i, component) in path.components.iter().enumerate() {
+      let last = i + 1 == path.components.len();
+
+      if last && let Some(assignment) = current.assignments.get(component) {
+        variable = Some(assignment);
+        break;
+      }
+
+      if let Some(module) = current.modules.get(component) {
+        current = module;
+      } else if current.absent_modules.contains(component) {
+        return Err(Error::ModuleAbsent {
+          module: current.module_path.join(component),
+        });
+      } else if last {
+        return Err(Error::EvalUnknownSubmoduleOrVariable {
+          suggestion: current.suggest_variable_or_submodule(component),
+          component: component.into(),
+        });
+      } else {
+        return Err(Error::EvalUnknownSubmodule {
+          suggestion: current.suggest_submodule(component),
+          component: component.into(),
+        });
+      }
     }
 
-    let arguments = arguments.iter().map(String::as_str).collect::<Vec<&str>>();
+    let variable_references = if let Some(assignment) = variable {
+      HashSet::from([assignment.number])
+    } else {
+      current
+        .assignments
+        .values()
+        .filter(|assignment| !assignment.private)
+        .map(|assignment| assignment.number)
+        .collect()
+    };
 
-    let groups = ArgumentParser::parse_arguments(self, &arguments)?;
-
-    let mut invocations = Vec::<Invocation>::new();
-
-    for group in &groups {
-      invocations.push(self.invocation(&group.arguments, &group.path, 0)?);
-    }
-
-    if config.one && invocations.len() > 1 {
-      return Err(Error::ExcessInvocations {
-        invocations: invocations.len(),
-      });
-    }
-
-    let ran = Ran::default();
-    for invocation in invocations {
-      Self::run_recipe(
-        &invocation
-          .arguments
-          .iter()
-          .copied()
-          .map(str::to_string)
-          .collect::<Vec<String>>(),
-        config,
-        &dotenv,
-        false,
-        &ran,
-        invocation.recipe,
-        &scopes,
-        search,
-      )?;
-    }
-
-    Ok(())
+    Ok((current, variable, variable_references))
   }
 
   pub(crate) fn check_unstable(&self, config: &Config) -> RunResult<'src> {
-    if let Some(&unstable_feature) = self.unstable_features.iter().next() {
+    if let Some(&unstable_feature) = self.unstable_features.first() {
       config.require_unstable(self, unstable_feature)?;
     }
 
@@ -260,38 +442,37 @@ impl<'src> Justfile<'src> {
     Ok(())
   }
 
-  pub(crate) fn get_alias(&self, name: &str) -> Option<&Alias<'src>> {
-    self.aliases.get(name)
+  pub(crate) fn recipe_alias(&self, name: &str) -> Option<&RecipeAlias<'src>> {
+    self.recipe_aliases.get(name)
   }
 
-  pub(crate) fn get_recipe(&self, name: &str) -> Option<&Recipe<'src>> {
-    self
-      .recipes
-      .get(name)
-      .map(Arc::as_ref)
-      .or_else(|| self.aliases.get(name).map(|alias| alias.target.as_ref()))
-  }
-
-  fn invocation<'run>(
-    &'run self,
-    arguments: &[&'run str],
-    path: &'run [String],
-    position: usize,
-  ) -> RunResult<'src, Invocation<'src, 'run>> {
-    if position + 1 == path.len() {
-      let recipe = self.get_recipe(&path[position]).unwrap();
-      Ok(Invocation {
-        arguments: arguments.into(),
-        recipe,
-      })
-    } else {
-      let module = self.modules.get(&path[position]).unwrap();
-      module.invocation(arguments, path, position + 1)
-    }
+  pub(crate) fn recipe(&self, name: &str) -> Option<&Recipe<'src>> {
+    self.recipes.get(name).map(Arc::as_ref).or_else(|| {
+      self
+        .recipe_aliases
+        .get(name)
+        .map(|alias| alias.target.as_ref())
+    })
   }
 
   pub(crate) fn is_submodule(&self) -> bool {
     self.name.is_some()
+  }
+
+  pub(crate) fn submodule(&self, path: &Modulepath) -> Option<&Justfile<'src>> {
+    let mut module = self;
+
+    for component in &path.components {
+      module = if let Some(submodule) = module.modules.get(component) {
+        submodule
+      } else {
+        self
+          .submodule(&module.module_aliases.get(component)?.target)
+          .unwrap()
+      };
+    }
+
+    Some(module)
   }
 
   pub(crate) fn name(&self) -> &'src str {
@@ -299,14 +480,16 @@ impl<'src> Justfile<'src> {
   }
 
   fn run_recipe(
-    arguments: &[String],
+    arguments: &[Value],
     config: &Config,
-    dotenv: &BTreeMap<String, String>,
     is_dependency: bool,
+    overrides: &HashMap<Number, String>,
     ran: &Ran,
     recipe: &Recipe<'src>,
-    scopes: &BTreeMap<String, (&Justfile<'src>, &Scope<'src, '_>)>,
+    scopes: &Scopes<'src, '_>,
     search: &Search,
+    cache: &Cache,
+    jobs: &Semaphore,
   ) -> RunResult<'src> {
     let mutex = ran.mutex(recipe, arguments);
 
@@ -316,13 +499,7 @@ impl<'src> Justfile<'src> {
       return Ok(());
     }
 
-    if !config.yes && !recipe.confirm()? {
-      return Err(Error::NotConfirmed {
-        recipe: recipe.name(),
-      });
-    }
-
-    let (module, scope) = scopes
+    let (module, scope, dotenv) = scopes
       .get(recipe.module_path())
       .expect("failed to retrieve scope for module");
 
@@ -330,45 +507,72 @@ impl<'src> Justfile<'src> {
       config,
       dotenv,
       module,
+      overrides,
+      scope,
       search,
     };
 
-    let (outer, positional) = Evaluator::evaluate_parameters(
+    let (outer, positional, env) = Evaluator::evaluate_parameters(
+      arguments,
       &context,
       is_dependency,
-      arguments,
       &recipe.parameters,
+      recipe,
       scope,
     )?;
 
     let scope = outer.child();
 
-    let mut evaluator = Evaluator::new(&context, true, &scope);
+    let mut evaluator = Evaluator::new(
+      &context,
+      BTreeMap::new(),
+      is_dependency,
+      Some(recipe.name),
+      &scope,
+    );
+
+    if !config.yes && !recipe.confirm(&mut evaluator)? {
+      return Err(Error::NotConfirmed {
+        recipe: recipe.name(),
+      });
+    }
 
     Self::run_dependencies(
       config,
       &context,
       recipe.priors(),
-      dotenv,
-      &mut evaluator,
-      ran,
       recipe,
+      &mut evaluator,
+      overrides,
+      ran,
       scopes,
       search,
+      cache,
+      jobs,
     )?;
 
-    recipe.run(&context, &scope, &positional, is_dependency)?;
+    recipe.run(
+      &context,
+      &env,
+      is_dependency,
+      &positional,
+      &scope,
+      cache,
+      jobs,
+    )?;
 
     Self::run_dependencies(
       config,
       &context,
       recipe.subsequents(),
-      dotenv,
-      &mut evaluator,
-      &Ran::default(),
       recipe,
+      &mut evaluator,
+      overrides,
+      &Ran::new(),
       scopes,
       search,
+      cache,
+      jobs,
     )?;
 
     *guard = true;
@@ -380,33 +584,61 @@ impl<'src> Justfile<'src> {
     config: &Config,
     context: &ExecutionContext<'src, 'run>,
     dependencies: &[Dependency<'src>],
-    dotenv: &BTreeMap<String, String>,
+    dependent: &Recipe<'src>,
     evaluator: &mut Evaluator<'src, 'run>,
+    overrides: &HashMap<Number, String>,
     ran: &Ran,
-    recipe: &Recipe<'src>,
-    scopes: &BTreeMap<String, (&Justfile<'src>, &Scope<'src, 'run>)>,
+    scopes: &Scopes<'src, 'run>,
     search: &Search,
+    cache: &Cache,
+    jobs: &Semaphore,
   ) -> RunResult<'src> {
     if context.config.no_dependencies {
       return Ok(());
     }
 
     let mut evaluated = Vec::new();
-    for Dependency { recipe, arguments } in dependencies {
-      let arguments = arguments
-        .iter()
-        .map(|argument| evaluator.evaluate_expression(argument))
-        .collect::<RunResult<Vec<String>>>()?;
-      evaluated.push((recipe, arguments));
+    for dependency in dependencies {
+      let mut grouped = Vec::new();
+      for group in &dependency.arguments {
+        let value = if context.module.settings.lists {
+          match group.as_slice() {
+            [] => Value::new(),
+            [argument] => evaluator.evaluate_value(&argument.expression)?,
+            _ => {
+              return Err(Error::internal(
+                "multiple arguments grouped to one parameter with lists setting",
+              ));
+            }
+          }
+        } else {
+          let mut elements = Vec::new();
+          for argument in group {
+            elements.push(evaluator.evaluate_value(&argument.expression)?.join());
+          }
+          elements.into()
+        };
+        grouped.push(value);
+      }
+
+      if let Some(star) = dependency.star() {
+        for element in &grouped[star] {
+          let mut arguments = grouped.clone();
+          arguments[star] = element.into();
+          evaluated.push((&dependency.recipe, arguments));
+        }
+      } else {
+        evaluated.push((&dependency.recipe, grouped));
+      }
     }
 
-    if recipe.is_parallel() {
+    if dependent.is_parallel() {
       thread::scope::<_, RunResult>(|thread_scope| {
         let mut handles = Vec::new();
         for (recipe, arguments) in evaluated {
           handles.push(thread_scope.spawn(move || {
             Self::run_recipe(
-              &arguments, config, dotenv, true, ran, recipe, scopes, search,
+              &arguments, config, true, overrides, ran, recipe, scopes, search, cache, jobs,
             )
           }));
         }
@@ -420,7 +652,7 @@ impl<'src> Justfile<'src> {
     } else {
       for (recipe, arguments) in evaluated {
         Self::run_recipe(
-          &arguments, config, dotenv, true, ran, recipe, scopes, search,
+          &arguments, config, true, overrides, ran, recipe, scopes, search, cache, jobs,
         )?;
       }
     }
@@ -428,8 +660,12 @@ impl<'src> Justfile<'src> {
     Ok(())
   }
 
-  pub(crate) fn modules(&self, config: &Config) -> Vec<&Justfile> {
-    let mut modules = self.modules.values().collect::<Vec<&Justfile>>();
+  pub(crate) fn public_modules(&self, config: &Config) -> Vec<&Justfile> {
+    let mut modules = self
+      .modules
+      .values()
+      .filter(|module| !module.private)
+      .collect::<Vec<&Justfile>>();
 
     if config.unsorted {
       modules.sort_by_key(|module| {
@@ -458,8 +694,51 @@ impl<'src> Justfile<'src> {
     recipes
   }
 
-  pub(crate) fn groups(&self) -> &[String] {
-    &self.groups
+  pub(crate) fn public_recipes_recursive(&self, config: &Config) -> Vec<&Recipe> {
+    let mut recipes = Vec::new();
+
+    let mut stack = vec![self];
+    while let Some(current) = stack.pop() {
+      for recipe in current.public_recipes(config) {
+        recipes.push(recipe);
+      }
+
+      for module in current.public_modules(config).into_iter().rev() {
+        stack.push(module);
+      }
+    }
+
+    recipes
+  }
+
+  pub(crate) fn public_aliases_recursive(
+    &self,
+    config: &Config,
+  ) -> Vec<(&RecipeAlias<'_>, &Modulepath)> {
+    let mut aliases = Vec::new();
+
+    let mut stack = vec![self];
+    while let Some(current) = stack.pop() {
+      for alias in current.recipe_aliases.values() {
+        if alias.is_public() {
+          aliases.push((alias, &current.module_path));
+        }
+      }
+
+      for module in current.public_modules(config).into_iter().rev() {
+        stack.push(module);
+      }
+    }
+
+    aliases
+  }
+
+  pub(crate) fn groups(&self) -> Vec<&str> {
+    self
+      .groups
+      .iter()
+      .map(|group| group.cooked.as_str())
+      .collect()
   }
 
   pub(crate) fn public_groups(&self, config: &Config) -> Vec<String> {
@@ -473,7 +752,7 @@ impl<'src> Justfile<'src> {
       }
     }
 
-    for submodule in self.modules.values() {
+    for submodule in self.public_modules(config) {
       for group in submodule.groups() {
         groups.push((&[], submodule.name.unwrap().offset, group.to_string()));
       }
@@ -495,7 +774,7 @@ impl<'src> Justfile<'src> {
 
 impl ColorDisplay for Justfile<'_> {
   fn fmt(&self, f: &mut Formatter, color: Color) -> fmt::Result {
-    let mut items = self.recipes.len() + self.assignments.len() + self.aliases.len();
+    let mut items = self.recipes.len() + self.assignments.len() + self.recipe_aliases.len();
     for (name, assignment) in &self.assignments {
       if assignment.export {
         write!(f, "export ")?;
@@ -506,7 +785,7 @@ impl ColorDisplay for Justfile<'_> {
         write!(f, "\n\n")?;
       }
     }
-    for alias in self.aliases.values() {
+    for alias in self.recipe_aliases.values() {
       write!(f, "{alias}")?;
       items -= 1;
       if items != 0 {
@@ -532,10 +811,7 @@ impl<'src> Keyed<'src> for Justfile<'src> {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-
-  use testing::compile;
-  use Error::*;
+  use {super::*, Error::*, testing::compile};
 
   run_error! {
     name: unknown_recipe_no_suggestion,
@@ -614,10 +890,10 @@ mod tests {
 
   run_error! {
     name: run_args,
-    src: r#"
+    src: "
       a return code:
-        @x() { {{return}} {{code + "0"}}; }; x
-    "#,
+        @x() { {{return}} {{code + '0'}}; }; x
+    ",
     args: ["a", "return", "15"],
     error: Code {
       recipe,
@@ -637,20 +913,14 @@ mod tests {
     name: missing_some_arguments,
     src: "a b c d:",
     args: ["a", "b", "c"],
-    error: ArgumentCountMismatch {
+    error: PositionalArgumentCountMismatch {
       recipe,
-      parameters,
       found,
       min,
       max,
     },
     check: {
-      let param_names = parameters
-        .iter()
-        .map(|p| p.name.lexeme())
-        .collect::<Vec<&str>>();
-      assert_eq!(recipe, "a");
-      assert_eq!(param_names, ["b", "c", "d"]);
+      assert_eq!(recipe.name(), "a");
       assert_eq!(found, 2);
       assert_eq!(min, 3);
       assert_eq!(max, 3);
@@ -661,20 +931,14 @@ mod tests {
     name: missing_some_arguments_variadic,
     src: "a b c +d:",
     args: ["a", "B", "C"],
-    error: ArgumentCountMismatch {
+    error: PositionalArgumentCountMismatch {
       recipe,
-      parameters,
       found,
       min,
       max,
     },
     check: {
-      let param_names = parameters
-        .iter()
-        .map(|p| p.name.lexeme())
-        .collect::<Vec<&str>>();
-      assert_eq!(recipe, "a");
-      assert_eq!(param_names, ["b", "c", "d"]);
+      assert_eq!(recipe.name(), "a");
       assert_eq!(found, 2);
       assert_eq!(min, 3);
       assert_eq!(max, usize::MAX - 1);
@@ -685,20 +949,14 @@ mod tests {
     name: missing_all_arguments,
     src: "a b c d:\n echo {{b}}{{c}}{{d}}",
     args: ["a"],
-    error: ArgumentCountMismatch {
+    error: PositionalArgumentCountMismatch {
       recipe,
-      parameters,
       found,
       min,
       max,
     },
     check: {
-      let param_names = parameters
-        .iter()
-        .map(|p| p.name.lexeme())
-        .collect::<Vec<&str>>();
-      assert_eq!(recipe, "a");
-      assert_eq!(param_names, ["b", "c", "d"]);
+      assert_eq!(recipe.name(), "a");
       assert_eq!(found, 0);
       assert_eq!(min, 3);
       assert_eq!(max, 3);
@@ -709,20 +967,14 @@ mod tests {
     name: missing_some_defaults,
     src: "a b c d='hello':",
     args: ["a", "b"],
-    error: ArgumentCountMismatch {
+    error: PositionalArgumentCountMismatch {
       recipe,
-      parameters,
       found,
       min,
       max,
     },
     check: {
-      let param_names = parameters
-        .iter()
-        .map(|p| p.name.lexeme())
-        .collect::<Vec<&str>>();
-      assert_eq!(recipe, "a");
-      assert_eq!(param_names, ["b", "c", "d"]);
+      assert_eq!(recipe.name(), "a");
       assert_eq!(found, 1);
       assert_eq!(min, 2);
       assert_eq!(max, 3);
@@ -733,20 +985,14 @@ mod tests {
     name: missing_all_defaults,
     src: "a b c='r' d='h':",
     args: ["a"],
-    error: ArgumentCountMismatch {
+    error: PositionalArgumentCountMismatch {
       recipe,
-      parameters,
       found,
       min,
       max,
     },
     check: {
-      let param_names = parameters
-        .iter()
-        .map(|p| p.name.lexeme())
-        .collect::<Vec<&str>>();
-      assert_eq!(recipe, "a");
-      assert_eq!(param_names, ["b", "c", "d"]);
+      assert_eq!(recipe.name(), "a");
       assert_eq!(found, 0);
       assert_eq!(min, 1);
       assert_eq!(max, 3);
@@ -754,29 +1000,16 @@ mod tests {
   }
 
   run_error! {
-    name: unknown_overrides,
-    src: "
-      a:
-       echo {{`f() { return 100; }; f`}}
-    ",
-    args: ["foo=bar", "baz=bob", "a"],
-    error: UnknownOverrides { overrides },
-    check: {
-      assert_eq!(overrides, &["baz", "foo"]);
-    }
-  }
-
-  run_error! {
     name: export_failure,
-    src: r#"
-      export foo := "a"
-      baz := "c"
-      export bar := "b"
+    src: "
+      export foo := 'a'
+      baz := 'c'
+      export bar := 'b'
       export abc := foo + bar + baz
 
       wut:
         echo $foo $bar $baz
-    "#,
+    ",
     args: ["--quiet", "wut"],
     error: Code {
       recipe,
@@ -795,7 +1028,6 @@ mod tests {
     let justfile = compile(input);
     let actual = format!("{}", justfile.color_display(Color::never()));
     assert_eq!(actual, expected);
-    println!("Re-parsing...");
     let reparsed = compile(&actual);
     let redumped = format!("{}", reparsed.color_display(Color::never()));
     assert_eq!(redumped, actual);
@@ -830,10 +1062,10 @@ foo a="b\t":
   #[test]
   fn parse_multiple() {
     case(
-      r"
+      "
 a:
 b:
-", r"a:
+", "a:
 
 b:",
     );
@@ -842,26 +1074,26 @@ b:",
   #[test]
   fn parse_variadic() {
     case(
-      r"
+      "
 
 foo +a:
 
 
   ",
-      r"foo +a:",
+      "foo +a:",
     );
   }
 
   #[test]
   fn parse_variadic_string_default() {
     case(
-      r#"
+      "
 
-foo +a="Hello":
+foo +a='Hello':
 
 
-  "#,
-      r#"foo +a="Hello":"#,
+  ",
+      "foo +a='Hello':",
     );
   }
 
@@ -881,23 +1113,23 @@ foo a='b\t':
   #[test]
   fn parse_export() {
     case(
-      r#"
-export a := "hello"
+      "
+export a := 'hello'
 
-  "#,
-      r#"export a := "hello""#,
+  ",
+      "export a := 'hello'",
     );
   }
 
   #[test]
   fn parse_alias_after_target() {
     case(
-      r"
+      "
 foo:
   echo a
 alias f := foo
 ",
-      r"alias f := foo
+      "alias f := foo
 
 foo:
     echo a",
@@ -907,12 +1139,12 @@ foo:
   #[test]
   fn parse_alias_before_target() {
     case(
-      r"
+      "
 alias f := foo
 foo:
   echo a
 ",
-      r"alias f := foo
+      "alias f := foo
 
 foo:
     echo a",
@@ -922,12 +1154,12 @@ foo:
   #[test]
   fn parse_alias_with_comment() {
     case(
-      r"
-alias f := foo #comment
+      "
+alias f := foo # comment
 foo:
   echo a
 ",
-      r"alias f := foo
+      "alias f := foo
 
 foo:
     echo a",
@@ -1003,15 +1235,15 @@ install:
   #[test]
   fn parse_assignments() {
     case(
-      r#"a := "0"
+      "a := '0'
 c := a + b + a + b
-b := "1"
-"#,
-      r#"a := "0"
+b := '1'
+",
+      "a := '0'
 
-b := "1"
+b := '1'
 
-c := a + b + a + b"#,
+c := a + b + a + b",
     );
   }
 
@@ -1032,10 +1264,10 @@ c := a + b + a + b",
   #[test]
   fn parse_interpolation_backticks() {
     case(
-      r#"a:
-  echo {{  `echo hello` + "blarg"   }} {{   `echo bob`   }}"#,
-      r#"a:
-    echo {{ `echo hello` + "blarg" }} {{ `echo bob` }}"#,
+      "a:
+  echo {{  `echo hello` + 'blarg'   }} {{   `echo bob`   }}",
+      "a:
+    echo {{ `echo hello` + 'blarg' }} {{ `echo bob` }}",
     );
   }
 
@@ -1082,81 +1314,81 @@ a:
   #[test]
   fn env_functions() {
     case(
-      r#"
+      "
 x := env_var('foo',)
 
 a:
-  {{env_var_or_default('foo' + 'bar', 'baz',)}} {{env_var(env_var("baz"))}}"#,
-      r#"x := env_var('foo')
+  {{env_var_or_default('foo' + 'bar', 'baz',)}} {{env_var(env_var('baz'))}}",
+      "x := env_var('foo')
 
 a:
-    {{ env_var_or_default('foo' + 'bar', 'baz') }} {{ env_var(env_var("baz")) }}"#,
+    {{ env_var_or_default('foo' + 'bar', 'baz') }} {{ env_var(env_var('baz')) }}",
     );
   }
 
   #[test]
   fn parameter_default_string() {
     case(
-      r#"
-f x="abc":
-"#,
-      r#"f x="abc":"#,
+      "
+f x='abc':
+",
+      "f x='abc':",
     );
   }
 
   #[test]
   fn parameter_default_raw_string() {
     case(
-      r"
+      "
 f x='abc':
 ",
-      r"f x='abc':",
+      "f x='abc':",
     );
   }
 
   #[test]
   fn parameter_default_backtick() {
     case(
-      r"
+      "
 f x=`echo hello`:
 ",
-      r"f x=`echo hello`:",
+      "f x=`echo hello`:",
     );
   }
 
   #[test]
   fn parameter_default_concatenation_string() {
     case(
-      r#"
-f x=(`echo hello` + "foo"):
-"#,
-      r#"f x=(`echo hello` + "foo"):"#,
+      "
+f x=(`echo hello` + 'foo'):
+",
+      "f x=(`echo hello` + 'foo'):",
     );
   }
 
   #[test]
   fn parameter_default_concatenation_variable() {
     case(
-      r#"
-x := "10"
-f y=(`echo hello` + x) +z="foo":
-"#,
-      r#"x := "10"
+      "
+x := '10'
+f y=(`echo hello` + x) +z='foo':
+",
+      "x := '10'
 
-f y=(`echo hello` + x) +z="foo":"#,
+f y=(`echo hello` + x) +z='foo':",
     );
   }
 
   #[test]
   fn parameter_default_multiple() {
     case(
-      r#"
-x := "10"
-f y=(`echo hello` + x) +z=("foo" + "bar"):
-"#,
-      r#"x := "10"
+      "
+x := '10'
+f y=(`echo hello` + x) +z=('foo' + 'bar'):
+",
+      "x := '10'
 
-f y=(`echo hello` + x) +z=("foo" + "bar"):"#,
+f y=(`echo hello` + x) +z=('foo' + 'bar'):",
     );
   }
 

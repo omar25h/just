@@ -5,47 +5,58 @@ fn dont_run_duplicate_recipes() {
   Test::new()
     .justfile(
       "
-      set dotenv-load # foo
-      bar:
+        set dotenv-load # foo
+        bar:
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
-fn invalid_bang_operator() {
+fn comment_after_unexport() {
   Test::new()
     .justfile(
       "
-      x := if '' !! '' { '' } else { '' }
+        unexport foo # bar
+
+        baz:
       ",
     )
-    .status(1)
-    .stderr(
-      r"
-error: Expected character `=` or `~`
- ——▶ justfile:1:13
-  │
-1 │ x := if '' !! '' { '' } else { '' }
-  │             ^
-",
-    )
-    .run();
+    .success();
 }
 
 #[test]
-fn truncated_bang_operator() {
+fn attribute_without_item() {
   Test::new()
-    .justfile("x := if '' !")
-    .status(1)
-    .stderr(
-      r"
-error: Expected character `=` or `~` but found end-of-file
- ——▶ justfile:1:13
-  │
-1 │ x := if '' !
-  │             ^
-",
+    .justfile(
+      "
+        [confirm]
+      ",
     )
-    .run();
+    .stderr(
+      "
+        error: expected '@', '[', comment, end of line, or identifier, but found end of file
+         ——▶ justfile:1:11
+          │
+        1 │ [confirm]
+          │          ^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn backslash_eof() {
+  Test::new()
+    .justfile("foo:\n\\")
+    .stderr(
+      "
+        error: expected escape sequence but found end-of-file
+         ——▶ justfile:2:1
+          │
+        2 │ \\
+          │ ^
+      ",
+    )
+    .failure();
 }

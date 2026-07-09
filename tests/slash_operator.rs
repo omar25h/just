@@ -2,43 +2,23 @@ use super::*;
 
 #[test]
 fn once() {
-  Test::new()
-    .justfile("x := 'a' / 'b'")
-    .args(["--evaluate", "x"])
-    .stdout("a/b")
-    .run();
+  assert_eval("'a' / 'b'", "a/b");
 }
 
 #[test]
 fn twice() {
-  Test::new()
-    .justfile("x := 'a' / 'b' / 'c'")
-    .args(["--evaluate", "x"])
-    .stdout("a/b/c")
-    .run();
+  assert_eval("'a' / 'b' / 'c'", "a/b/c");
 }
 
 #[test]
 fn no_lhs_once() {
-  Test::new()
-    .justfile("x := / 'a'")
-    .args(["--evaluate", "x"])
-    .stdout("/a")
-    .run();
+  assert_eval("/ 'a'", "/a");
 }
 
 #[test]
 fn no_lhs_twice() {
-  Test::new()
-    .justfile("x := / 'a' / 'b'")
-    .args(["--evaluate", "x"])
-    .stdout("/a/b")
-    .run();
-  Test::new()
-    .justfile("x := // 'a'")
-    .args(["--evaluate", "x"])
-    .stdout("//a")
-    .run();
+  assert_eval("/ 'a' / 'b'", "/a/b");
+  assert_eval("// 'a'", "//a");
 }
 
 #[test]
@@ -47,15 +27,14 @@ fn no_rhs_once() {
     .justfile("x := 'a' /")
     .stderr(
       "
-      error: Expected backtick, identifier, '(', '/', or string, but found end of file
-       ——▶ justfile:1:11
-        │
-      1 │ x := 'a' /
-        │           ^
-    ",
+        error: expected backtick, '!', '[', identifier, '(', '/', or string, but found end of file
+         ——▶ justfile:1:11
+          │
+        1 │ x := 'a' /
+          │           ^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -63,21 +42,20 @@ fn default_un_parenthesized() {
   Test::new()
     .justfile(
       "
-      foo x='a' / 'b':
-        echo {{x}}
-    ",
+        foo x='a' / 'b':
+          echo {{x}}
+      ",
     )
     .stderr(
       "
-      error: Expected '*', ':', '$', identifier, or '+', but found '/'
-       ——▶ justfile:1:11
-        │
-      1 │ foo x='a' / 'b':
-        │           ^
-    ",
+        error: expected '*', ':', '$', identifier, or '+', but found '/'
+         ——▶ justfile:1:11
+          │
+        1 │ foo x='a' / 'b':
+          │           ^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -85,21 +63,20 @@ fn no_lhs_un_parenthesized() {
   Test::new()
     .justfile(
       "
-      foo x=/ 'a' / 'b':
-        echo {{x}}
-    ",
+        foo x=/ 'a' / 'b':
+          echo {{x}}
+      ",
     )
     .stderr(
       "
-      error: Expected backtick, identifier, '(', or string, but found '/'
-       ——▶ justfile:1:7
-        │
-      1 │ foo x=/ 'a' / 'b':
-        │       ^
-    ",
+        error: expected backtick, '!', '[', identifier, '(', or string, but found '/'
+         ——▶ justfile:1:7
+          │
+        1 │ foo x=/ 'a' / 'b':
+          │       ^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -107,13 +84,13 @@ fn default_parenthesized() {
   Test::new()
     .justfile(
       "
-      foo x=('a' / 'b'):
-        echo {{x}}
-    ",
+        foo x=('a' / 'b'):
+          echo {{x}}
+      ",
     )
     .stderr("echo a/b\n")
     .stdout("a/b\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -121,11 +98,11 @@ fn no_lhs_parenthesized() {
   Test::new()
     .justfile(
       "
-      foo x=(/ 'a' / 'b'):
-        echo {{x}}
-    ",
+        foo x=(/ 'a' / 'b'):
+          echo {{x}}
+      ",
     )
     .stderr("echo /a/b\n")
     .stdout("/a/b\n")
-    .run();
+    .success();
 }

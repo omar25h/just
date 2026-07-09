@@ -1,13 +1,7 @@
 use {
   super::*,
-  pretty_assertions::{assert_eq, StrComparison},
+  pretty_assertions::{StrComparison, assert_eq},
 };
-
-pub(crate) struct Output {
-  pub(crate) pid: u32,
-  pub(crate) stdout: String,
-  pub(crate) tempdir: TempDir,
-}
 
 #[must_use]
 pub(crate) struct Test {
@@ -18,14 +12,12 @@ pub(crate) struct Test {
   pub(crate) justfile: Option<String>,
   pub(crate) response: Option<Response>,
   pub(crate) shell: bool,
-  pub(crate) status: i32,
   pub(crate) stderr: String,
   pub(crate) stderr_regex: Option<Regex>,
   pub(crate) stdin: String,
   pub(crate) stdout: String,
   pub(crate) stdout_regex: Option<Regex>,
   pub(crate) tempdir: TempDir,
-  pub(crate) test_round_trip: bool,
   pub(crate) unindent_stdout: bool,
 }
 
@@ -40,17 +32,15 @@ impl Test {
       current_dir: PathBuf::new(),
       env: BTreeMap::new(),
       expected_files: BTreeMap::new(),
-      justfile: Some(String::new()),
+      justfile: None,
       response: None,
       shell: true,
-      status: EXIT_SUCCESS,
       stderr: String::new(),
       stderr_regex: None,
       stdin: String::new(),
       stdout: String::new(),
       stdout_regex: None,
       tempdir,
-      test_round_trip: true,
       unindent_stdout: true,
     }
   }
@@ -77,9 +67,18 @@ impl Test {
     self
   }
 
+  pub(crate) fn path(self, path: impl AsRef<Path>) -> Self {
+    let value = self.tempdir.path().join(path).to_str().unwrap().to_owned();
+    self.env("PATH", &value)
+  }
+
   pub(crate) fn env(mut self, key: &str, val: &str) -> Self {
     self.env.insert(key.to_string(), val.to_string());
     self
+  }
+
+  pub(crate) fn unstable(self) -> Self {
+    self.env("JUST_UNSTABLE", "1")
   }
 
   pub(crate) fn justfile(mut self, justfile: impl Into<String>) -> Self {
@@ -91,19 +90,21 @@ impl Test {
     self.tempdir.path().join("justfile")
   }
 
-  #[cfg(unix)]
   #[track_caller]
   pub(crate) fn symlink(self, original: &str, link: &str) -> Self {
-    std::os::unix::fs::symlink(
-      self.tempdir.path().join(original),
-      self.tempdir.path().join(link),
-    )
-    .unwrap();
-    self
-  }
+    let original = self.tempdir.path().join(original);
+    let link = self.tempdir.path().join(link);
 
-  pub(crate) fn no_justfile(mut self) -> Self {
-    self.justfile = None;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(original, link).unwrap();
+
+    #[cfg(windows)]
+    if original.is_dir() {
+      std::os::windows::fs::symlink_dir(original, link).unwrap();
+    } else {
+      std::os::windows::fs::symlink_file(original, link).unwrap();
+    }
+
     self
   }
 
@@ -114,11 +115,6 @@ impl Test {
 
   pub(crate) fn shell(mut self, shell: bool) -> Self {
     self.shell = shell;
-    self
-  }
-
-  pub(crate) fn status(mut self, exit_status: i32) -> Self {
-    self.status = exit_status;
     self
   }
 
@@ -147,27 +143,20 @@ impl Test {
     self
   }
 
-  pub(crate) fn test_round_trip(mut self, test_round_trip: bool) -> Self {
-    self.test_round_trip = test_round_trip;
-    self
-  }
-
-  pub(crate) fn tree(self, mut tree: Tree) -> Self {
-    tree.map(|_name, content| unindent(content));
-    tree.instantiate(self.tempdir.path()).unwrap();
-    self
-  }
-
   pub(crate) fn unindent_stdout(mut self, unindent_stdout: bool) -> Self {
     self.unindent_stdout = unindent_stdout;
     self
   }
 
-  pub(crate) fn write(self, path: impl AsRef<Path>, content: impl AsRef<[u8]>) -> Self {
+  pub(crate) fn write(self, path: impl AsRef<Path>, content: &str) -> Self {
     let path = self.tempdir.path().join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, content).unwrap();
+    fs::write(path, unindent(content)).unwrap();
     self
+  }
+
+  pub(crate) fn write_executable(self, path: impl AsRef<Path> + Copy, content: &str) -> Self {
+    self.write(path, content).make_executable(path)
   }
 
   pub(crate) fn make_executable(self, path: impl AsRef<Path>) -> Self {
@@ -201,11 +190,19 @@ impl Test {
       .insert(path.into(), content.as_ref().into());
     self
   }
-}
 
-impl Test {
   #[track_caller]
-  pub(crate) fn run(self) -> Output {
+  pub(crate) fn success(self) -> Output {
+    self.status(0)
+  }
+
+  #[track_caller]
+  pub(crate) fn failure(self) -> Output {
+    self.status(1)
+  }
+
+  #[track_caller]
+  pub(crate) fn status(self, status: i32) -> Output {
     fn compare<T: PartialEq + Debug>(name: &str, have: T, want: T) -> bool {
       let equal = have == want;
       if !equal {
@@ -235,7 +232,7 @@ impl Test {
 
     let stderr = unindent(&self.stderr);
 
-    let mut command = Command::new(executable_path("just"));
+    let mut command = Command::new(JUST);
 
     if self.shell {
       command.args(["--shell", "bash"]);
@@ -268,28 +265,28 @@ impl Test {
     let output_stdout = str::from_utf8(&output.stdout).unwrap();
     let output_stderr = str::from_utf8(&output.stderr).unwrap();
 
-    if let Some(ref stdout_regex) = self.stdout_regex {
+    if let Some(stdout_regex) = &self.stdout_regex {
       assert!(
         stdout_regex.is_match(output_stdout),
         "Stdout regex mismatch:\n{output_stdout:?}\n!~=\n/{stdout_regex:?}/",
       );
     }
 
-    if let Some(ref stderr_regex) = self.stderr_regex {
+    if let Some(stderr_regex) = &self.stderr_regex {
       assert!(
         stderr_regex.is_match(output_stderr),
         "Stderr regex mismatch:\n{output_stderr:?}\n!~=\n/{stderr_regex:?}/",
       );
     }
 
-    if !compare("status", output.status.code(), Some(self.status))
+    if !compare("status", output.status.code(), Some(status))
       | (self.stdout_regex.is_none() && !compare_string("stdout", output_stdout, &stdout))
       | (self.stderr_regex.is_none() && !compare_string("stderr", output_stderr, &stderr))
     {
       panic!("Output mismatch.");
     }
 
-    if let Some(ref response) = self.response {
+    if let Some(response) = &self.response {
       assert_eq!(
         &serde_json::from_str::<Response>(output_stdout)
           .expect("failed to deserialize stdout as response"),
@@ -308,62 +305,10 @@ impl Test {
       );
     }
 
-    if self.test_round_trip && self.status == EXIT_SUCCESS {
-      self.round_trip();
-    }
-
     Output {
       pid,
       stdout: output_stdout.into(),
       tempdir: self.tempdir,
     }
   }
-
-  fn round_trip(&self) {
-    println!("Reparsing...");
-
-    let output = Command::new(executable_path("just"))
-      .current_dir(self.tempdir.path())
-      .arg("--dump")
-      .envs(&self.env)
-      .output()
-      .expect("just invocation failed");
-
-    assert!(
-      output.status.success(),
-      "dump failed: {} {:?}",
-      output.status,
-      output,
-    );
-
-    let dumped = String::from_utf8(output.stdout).unwrap();
-
-    let reparsed_path = self.tempdir.path().join("reparsed.just");
-
-    fs::write(&reparsed_path, &dumped).unwrap();
-
-    let output = Command::new(executable_path("just"))
-      .current_dir(self.tempdir.path())
-      .arg("--justfile")
-      .arg(&reparsed_path)
-      .arg("--dump")
-      .envs(&self.env)
-      .output()
-      .expect("just invocation failed");
-
-    assert!(output.status.success(), "reparse failed: {}", output.status);
-
-    let reparsed = String::from_utf8(output.stdout).unwrap();
-
-    assert_eq!(reparsed, dumped, "reparse mismatch");
-  }
-}
-
-pub fn assert_eval_eq(expression: &str, result: &str) {
-  Test::new()
-    .justfile(format!("x := {expression}"))
-    .args(["--evaluate", "x"])
-    .stdout(result)
-    .unindent_stdout(false)
-    .run();
 }

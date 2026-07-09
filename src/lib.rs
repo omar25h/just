@@ -9,13 +9,18 @@ pub(crate) use {
     alias::Alias,
     alias_style::AliasStyle,
     analyzer::Analyzer,
-    argument_parser::ArgumentParser,
+    arg_attribute::ArgAttribute,
     assignment::Assignment,
-    assignment_resolver::AssignmentResolver,
     ast::Ast,
-    attribute::{Attribute, AttributeDiscriminant},
+    attribute::{Attribute, AttributeKind},
     attribute_set::AttributeSet,
     binding::Binding,
+    cache::Cache,
+    cache_entry::CacheEntry,
+    cache_key::CacheKey,
+    cache_lock::CacheLock,
+    cache_status::CacheStatus,
+    clean::Clean,
     color::Color,
     color_display::ColorDisplay,
     command_color::CommandColor,
@@ -24,41 +29,63 @@ pub(crate) use {
     compile_error::CompileError,
     compile_error_kind::CompileErrorKind,
     compiler::Compiler,
-    condition::Condition,
+    completer::Completer,
     conditional_operator::ConditionalOperator,
     config::Config,
     config_error::ConfigError,
+    const_error::ConstError,
+    const_eval_error::ConstEvalError,
     constants::constants,
     count::Count,
+    datetime_format::datetime_format,
+    datetime_format_error::DatetimeFormatError,
     delimiter::Delimiter,
     dependency::Dependency,
+    dependency_argument::DependencyArgument,
+    disabled::Disabled,
     dump_format::DumpFormat,
+    element::Element,
     enclosure::Enclosure,
+    environment::Environment,
     error::Error,
+    evaluate_format::EvaluateFormat,
     evaluator::Evaluator,
     execution_context::ExecutionContext,
     executor::Executor,
     expression::Expression,
+    expression_context::ExpressionContext,
+    format_string_part::FormatStringPart,
     fragment::Fragment,
     function::Function,
+    function_definition::FunctionDefinition,
+    indentation::Indentation,
     interpreter::Interpreter,
-    item::Item,
+    invocation::Invocation,
+    invocation_parser::InvocationParser,
+    item::{Item, ItemKind},
     justfile::Justfile,
     keyed::Keyed,
     keyword::Keyword,
+    layer::Layer,
     lexer::Lexer,
     line::Line,
     list::List,
+    list_entry::ListEntry,
+    list_feature::ListFeature,
+    list_operator::ListOperator,
     load_dotenv::load_dotenv,
     loader::Loader,
-    module_path::ModulePath,
+    modulepath::Modulepath,
     name::Name,
     namepath::Namepath,
+    number::Number,
+    numerator::Numerator,
     ordinal::Ordinal,
     output_error::OutputError,
     parameter::Parameter,
     parameter_kind::ParameterKind,
     parser::Parser,
+    pattern::Pattern,
     platform::Platform,
     platform_interface::PlatformInterface,
     position::Position,
@@ -68,71 +95,90 @@ pub(crate) use {
     recipe::Recipe,
     recipe_resolver::RecipeResolver,
     recipe_signature::RecipeSignature,
+    reference::Reference,
+    references::References,
+    request::Request,
+    resolution::Resolution,
     scope::Scope,
     search::Search,
     search_config::SearchConfig,
     search_error::SearchError,
+    semaphore::Semaphore,
     set::Set,
     setting::Setting,
     settings::Settings,
     shebang::Shebang,
+    shell::Shell,
+    shell_kind::ShellKind,
     show_whitespace::ShowWhitespace,
+    sigil::Sigil,
     signal::Signal,
     signal_handler::SignalHandler,
     source::Source,
+    string_context::StringContext,
     string_delimiter::StringDelimiter,
     string_kind::StringKind,
     string_literal::StringLiteral,
+    string_state::StringState,
+    style::Style,
     subcommand::Subcommand,
     suggestion::Suggestion,
+    switch::Switch,
     table::Table,
-    thunk::Thunk,
+    tangle::tangle,
     token::Token,
     token_kind::TokenKind,
     unresolved_dependency::UnresolvedDependency,
     unresolved_recipe::UnresolvedRecipe,
     unstable_feature::UnstableFeature,
+    usage::Usage,
     use_color::UseColor,
-    variables::Variables,
+    value::Value,
+    variable_resolver::VariableResolver,
     verbosity::Verbosity,
+    version::Version,
     warning::Warning,
     which::which,
   },
   camino::Utf8Path,
-  clap::ValueEnum,
-  derive_where::derive_where,
-  edit_distance::edit_distance,
-  lexiclean::Lexiclean,
+  chrono::{DateTime, Local, TimeZone, Utc, format::StrftimeItems},
+  clap::{CommandFactory, FromArgMatches, Parser as _, ValueEnum},
+  clap_complete::{ArgValueCompleter, CompletionCandidate, PathCompleter, engine::ValueCompleter},
+  digest_io::HashWriter,
   libc::EXIT_FAILURE,
-  once_cell::sync::Lazy,
   rand::seq::IndexedRandom,
   regex::Regex,
   serde::{
-    ser::{SerializeMap, SerializeSeq},
-    Deserialize, Serialize, Serializer,
+    Deserialize, Deserializer, Serialize, Serializer,
+    ser::{SerializeMap, SerializeSeq, SerializeStruct},
   },
+  sha2::{Digest, Sha256},
   snafu::{ResultExt, Snafu},
   std::{
-    borrow::Cow,
-    cmp,
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    env,
-    ffi::OsString,
+    borrow::Borrow,
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map},
+    env::{self, VarError},
+    ffi::{OsStr, OsString},
     fmt::{self, Debug, Display, Formatter},
-    fs,
-    io::{self, Read, Seek, Write},
+    fs::{self, File},
+    io::{self, Sink, Write},
     iter::{self, FromIterator},
     mem,
+    num::{NonZeroU64, ParseIntError},
     ops::Deref,
-    ops::{Index, Range, RangeInclusive},
-    path::{self, Path, PathBuf},
+    ops::{Index, RangeInclusive},
+    path::{self, Component, Path, PathBuf},
     process::{self, Command, ExitStatus, Stdio},
-    str::{self, Chars},
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
-    thread, vec,
+    slice,
+    str::{self, Chars, FromStr},
+    sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard},
+    thread,
+    time::Instant,
+    vec,
   },
-  strum::{Display, EnumDiscriminants, EnumString, IntoStaticStr},
-  tempfile::{tempfile, TempDir},
+  strum::{Display, EnumDiscriminants, EnumIter, EnumString, IntoStaticStr},
+  tempfile::TempDir,
   typed_arena::Arena,
   unicode_width::{UnicodeWidthChar, UnicodeWidthStr},
 };
@@ -140,23 +186,28 @@ pub(crate) use {
 #[cfg(test)]
 pub(crate) use {
   crate::{node::Node, tree::Tree},
-  std::slice,
+  std::borrow::Cow,
 };
 
 pub use crate::run::run;
 
 #[doc(hidden)]
-use request::Request;
-
-// Used in integration tests.
-#[doc(hidden)]
-pub use {request::Response, subcommand::INIT_JUSTFILE, unindent::unindent};
+pub use {arguments::Arguments, request::Response, subcommand::INIT_JUSTFILE, unindent::unindent};
 
 type CompileResult<'a, T = ()> = Result<T, CompileError<'a>>;
 type ConfigResult<T> = Result<T, ConfigError>;
-type FunctionResult = Result<String, String>;
 type RunResult<'a, T = ()> = Result<T, Error<'a>>;
 type SearchResult<T> = Result<T, SearchError>;
+type StringResult = Result<String, String>;
+type ValueResult = Result<Value, String>;
+
+type ModuleAlias<'src> = Alias<'src, Modulepath>;
+type RecipeAlias<'src> = Alias<'src, Arc<Recipe<'src>>>;
+
+const JUST_DIRECTORY: &str = "just";
+const RECURSION_LIMIT: usize = if cfg!(windows) { 48 } else { 256 };
+const TEMPDIR_PREFIX: &str = "just-";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]
 #[macro_use]
@@ -172,12 +223,6 @@ pub mod node;
 #[cfg(fuzzing)]
 pub mod fuzzing;
 
-// Used by Janus, https://github.com/casey/janus, a tool
-// that analyses all public justfiles on GitHub to avoid
-// breaking changes.
-#[doc(hidden)]
-pub mod summary;
-
 // Used for testing with the `--request` subcommand.
 #[doc(hidden)]
 pub mod request;
@@ -185,13 +230,19 @@ pub mod request;
 mod alias;
 mod alias_style;
 mod analyzer;
-mod argument_parser;
+mod arg_attribute;
+mod arguments;
 mod assignment;
-mod assignment_resolver;
 mod ast;
 mod attribute;
 mod attribute_set;
 mod binding;
+mod cache;
+mod cache_entry;
+mod cache_key;
+mod cache_lock;
+mod cache_status;
+mod clean;
 mod color;
 mod color_display;
 mod command_color;
@@ -200,42 +251,64 @@ mod compilation;
 mod compile_error;
 mod compile_error_kind;
 mod compiler;
-mod completions;
-mod condition;
+mod completer;
 mod conditional_operator;
 mod config;
 mod config_error;
+mod const_error;
+mod const_eval_error;
 mod constants;
 mod count;
+mod datetime_format;
+mod datetime_format_error;
 mod delimiter;
 mod dependency;
+mod dependency_argument;
+mod disabled;
 mod dump_format;
+mod element;
 mod enclosure;
+mod environment;
 mod error;
+mod evaluate_format;
 mod evaluator;
 mod execution_context;
 mod executor;
 mod expression;
+mod expression_context;
+mod filesystem;
+mod format_string_part;
 mod fragment;
 mod function;
+mod function_definition;
+mod indentation;
 mod interpreter;
+mod invocation;
+mod invocation_parser;
 mod item;
 mod justfile;
 mod keyed;
 mod keyword;
+mod layer;
 mod lexer;
 mod line;
 mod list;
+mod list_entry;
+mod list_feature;
+mod list_operator;
 mod load_dotenv;
 mod loader;
-mod module_path;
+mod modulepath;
 mod name;
 mod namepath;
+mod number;
+mod numerator;
 mod ordinal;
 mod output_error;
 mod parameter;
 mod parameter_kind;
 mod parser;
+mod pattern;
 mod platform;
 mod platform_interface;
 mod position;
@@ -245,36 +318,50 @@ mod range_ext;
 mod recipe;
 mod recipe_resolver;
 mod recipe_signature;
+mod reference;
+mod references;
+mod resolution;
 mod run;
 mod scope;
 mod search;
 mod search_config;
 mod search_error;
+mod semaphore;
 mod set;
 mod setting;
 mod settings;
 mod shebang;
+mod shell;
+mod shell_kind;
 mod show_whitespace;
+mod sigil;
 mod signal;
 mod signal_handler;
 #[cfg(unix)]
 mod signals;
 mod source;
+mod string_context;
 mod string_delimiter;
 mod string_kind;
 mod string_literal;
+mod string_state;
+mod style;
 mod subcommand;
 mod suggestion;
+mod switch;
 mod table;
-mod thunk;
+mod tangle;
 mod token;
 mod token_kind;
 mod unindent;
 mod unresolved_dependency;
 mod unresolved_recipe;
 mod unstable_feature;
+mod usage;
 mod use_color;
-mod variables;
+mod value;
+mod variable_resolver;
 mod verbosity;
+mod version;
 mod warning;
 mod which;

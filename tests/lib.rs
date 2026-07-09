@@ -1,17 +1,10 @@
 use {
-  crate::{
-    assert_stdout::assert_stdout,
-    assert_success::assert_success,
-    tempdir::tempdir,
-    test::{assert_eval_eq, Output, Test},
-  },
-  executable_path::executable_path,
-  just::{unindent, Response},
-  libc::{EXIT_FAILURE, EXIT_SUCCESS},
+  crate::{output::Output, tempdir::tempdir, test::Test},
+  just::{Response, unindent},
   pretty_assertions::Comparison,
   regex::Regex,
   serde::{Deserialize, Serialize},
-  serde_json::{json, Value},
+  serde_json::{Value, json},
   std::{
     collections::BTreeMap,
     env::{self, consts::EXE_SUFFIX},
@@ -20,18 +13,63 @@ use {
     fs,
     io::Write,
     iter,
-    path::{Path, PathBuf, MAIN_SEPARATOR, MAIN_SEPARATOR_STR},
+    path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf},
     process::{Command, Stdio},
-    str,
+    str, thread,
     time::{Duration, Instant},
   },
   tempfile::TempDir,
-  temptree::{temptree, tree, Tree},
   which::which,
 };
 
-#[cfg(not(windows))]
-use std::thread;
+const FALSE: &str = "[]";
+const JUST: &str = env!("CARGO_BIN_EXE_just");
+const TRUE: &str = "\"true\"";
+
+#[track_caller]
+fn assert_dump(justfile: &str, dump: &str) {
+  Test::new()
+    .arg("--dump")
+    .justfile(justfile)
+    .stdout(dump)
+    .success();
+}
+
+#[track_caller]
+fn assert_eval(expression: &str, result: &str) {
+  Test::new()
+    .justfile(format!("x := {expression}"))
+    .args(["--evaluate", "x"])
+    .stdout(result)
+    .unindent_stdout(false)
+    .success();
+}
+
+#[track_caller]
+fn assert_list(expression: &str, result: &str) {
+  Test::new()
+    .justfile(format!("set lists\n\nx := show({expression})"))
+    .unstable()
+    .args(["--evaluate", "x"])
+    .stdout(result)
+    .unindent_stdout(false)
+    .success();
+}
+
+#[track_caller]
+fn assert_stdout(output: &std::process::Output, stdout: &str) {
+  assert_success(output);
+  assert_eq!(String::from_utf8_lossy(&output.stdout), stdout);
+}
+
+#[track_caller]
+fn assert_success(output: &std::process::Output) {
+  if !output.status.success() {
+    eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+    eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+    panic!("{}", output.status);
+  }
+}
 
 fn default<T: Default>() -> T {
   Default::default()
@@ -45,26 +83,30 @@ mod alias_style;
 mod allow_duplicate_recipes;
 mod allow_duplicate_variables;
 mod allow_missing;
-mod assert_stdout;
-mod assert_success;
+mod arg_attribute;
 mod assertions;
 mod assignment;
 mod attributes;
 mod backticks;
+mod booleans;
 mod byte_order_mark;
+mod cache;
 mod ceiling;
 mod changelog;
 mod choose;
 mod command;
+mod comparison;
 mod completions;
 mod conditional;
 mod confirm;
 mod constants;
 mod datetime;
+mod default;
 mod delimiters;
 mod dependencies;
 mod directories;
 mod dotenv;
+mod dump;
 mod edit;
 mod equals;
 mod error_messages;
@@ -74,28 +116,45 @@ mod explain;
 mod export;
 mod fallback;
 mod format;
+mod format_string;
+mod function_definitions;
 mod functions;
 #[cfg(unix)]
 mod global;
 mod groups;
+mod guards;
 mod ignore_comments;
 mod imports;
 mod init;
+mod interpolation;
 mod invocation_directory;
 mod json;
+mod justfile_from_stdin;
+mod lazy;
 mod line_prefixes;
 mod list;
+mod list_literals;
+mod lists;
 mod logical_operators;
 mod man;
+mod mapped_dependencies;
+mod markdown;
+mod minimum_version;
 mod misc;
 mod modules;
 mod multibyte_char;
+mod negation;
 mod newline_escape;
 mod no_aliases;
 mod no_cd;
 mod no_dependencies;
 mod no_exit_message;
+#[cfg(target_os = "linux")]
+mod non_unicode;
+mod options;
 mod os_attributes;
+mod output;
+mod overrides;
 mod parallel;
 mod parameters;
 mod parser;
@@ -107,11 +166,13 @@ mod readme;
 mod recursion_limit;
 mod regexes;
 mod request;
+mod resolve;
 mod run;
 mod scope;
 mod script;
 mod search;
 mod search_arguments;
+mod settings;
 mod shadowing_parameters;
 mod shebang;
 mod shell;
@@ -121,6 +182,7 @@ mod show;
 mod signals;
 mod slash_operator;
 mod string;
+mod style;
 mod subsequents;
 mod summary;
 mod tempdir;
@@ -128,6 +190,7 @@ mod timestamps;
 mod undefined_variables;
 mod unexport;
 mod unstable;
+mod usage;
 mod which_function;
 #[cfg(windows)]
 mod windows;

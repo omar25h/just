@@ -1,11 +1,16 @@
 use {
   super::*,
-  ansi_term::{ANSIGenericString, Color::*, Prefix, Style, Suffix},
+  nu_ansi_term::{
+    AnsiGenericString,
+    Color::{Blue, Cyan, Green, Purple, Red, Yellow},
+    Prefix, Style, Suffix,
+  },
   std::io::{self, IsTerminal},
 };
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Color {
+  indentation: Indentation,
   is_terminal: bool,
   style: Style,
   use_color: UseColor,
@@ -24,6 +29,7 @@ impl Color {
     self.restyle(Style::new().fg(Purple))
   }
 
+  #[cfg(test)]
   pub(crate) fn always() -> Self {
     Self {
       use_color: UseColor::Always,
@@ -43,7 +49,7 @@ impl Color {
     self.restyle(Style::new().fg(Cyan).bold())
   }
 
-  pub(crate) fn command(self, foreground: Option<ansi_term::Color>) -> Self {
+  pub(crate) fn command(self, foreground: Option<nu_ansi_term::Color>) -> Self {
     self.restyle(Style {
       foreground,
       is_bold: true,
@@ -87,6 +93,10 @@ impl Color {
     self.restyle(Style::new().fg(Yellow).bold())
   }
 
+  pub(crate) fn indentation(self) -> Indentation {
+    self.indentation
+  }
+
   pub(crate) fn message(self) -> Self {
     self.restyle(Style::new().bold())
   }
@@ -98,7 +108,7 @@ impl Color {
     }
   }
 
-  pub(crate) fn paint<'a>(&self, text: &'a str) -> ANSIGenericString<'a, str> {
+  pub(crate) fn paint<'a>(&self, text: &'a str) -> AnsiGenericString<'a, str> {
     self.effective_style().paint(text)
   }
 
@@ -133,6 +143,10 @@ impl Color {
     self.restyle(Style::new().fg(Green))
   }
 
+  pub(crate) fn string_escape(self) -> Self {
+    self.restyle(Style::new().fg(Cyan))
+  }
+
   pub(crate) fn suffix(&self) -> Suffix {
     self.effective_style().suffix()
   }
@@ -140,23 +154,35 @@ impl Color {
   pub(crate) fn warning(self) -> Self {
     self.restyle(Style::new().fg(Yellow).bold())
   }
-}
 
-impl From<UseColor> for Color {
-  fn from(use_color: UseColor) -> Self {
+  pub(crate) fn heading(self) -> Self {
+    self.restyle(Style::new().fg(Yellow).bold())
+  }
+
+  pub(crate) fn option(self) -> Self {
+    self.restyle(Style::new().fg(Green))
+  }
+
+  pub(crate) fn argument(self) -> Self {
+    self.restyle(Style::new().fg(Cyan))
+  }
+
+  pub(crate) fn new(indentation: Indentation, use_color: UseColor) -> Self {
     Self {
+      indentation,
       use_color,
       ..Default::default()
     }
   }
-}
 
-impl Default for Color {
-  fn default() -> Self {
+  pub(crate) fn with_use_color(self, use_color: UseColor) -> Self {
+    Self { use_color, ..self }
+  }
+
+  pub(crate) fn with_indentation(self, indentation: Indentation) -> Self {
     Self {
-      is_terminal: false,
-      style: Style::new(),
-      use_color: UseColor::Auto,
+      indentation,
+      ..self
     }
   }
 }

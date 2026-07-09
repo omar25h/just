@@ -4,7 +4,7 @@ use {super::*, just::INIT_JUSTFILE};
 fn current_dir() {
   let tmp = tempdir();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("--init")
     .output()
@@ -20,18 +20,14 @@ fn current_dir() {
 
 #[test]
 fn exists() {
-  let output = Test::new()
-    .no_justfile()
+  Test::new()
     .arg("--init")
-    .stderr_regex("Wrote justfile to `.*`\n")
-    .run();
-
-  Test::with_tempdir(output.tempdir)
-    .no_justfile()
+    .stderr_regex("wrote justfile to `.*`\n")
+    .success()
+    .test()
     .arg("--init")
-    .status(EXIT_FAILURE)
-    .stderr_regex("error: Justfile `.*` already exists\n")
-    .run();
+    .stderr_regex("error: justfile `.*` already exists\n")
+    .failure();
 }
 
 #[test]
@@ -43,44 +39,36 @@ fn write_error() {
   fs::create_dir(justfile_path).unwrap();
 
   test
-    .no_justfile()
     .args(["--init"])
-    .status(EXIT_FAILURE)
     .stderr_regex(if cfg!(windows) {
-      r"error: Failed to write justfile to `.*`: Access is denied. \(os error 5\)\n"
+      r"error: failed to write justfile to `.*`: Access is denied. \(os error 5\)\n"
     } else {
-      r"error: Failed to write justfile to `.*`: Is a directory \(os error 21\)\n"
+      r"error: failed to write justfile to `.*`: Is a directory \(os error 21\)\n"
     })
-    .run();
+    .failure();
 }
 
 #[test]
 fn invocation_directory() {
-  let tmp = temptree! {
-    ".git": {},
-  };
-
-  let test = Test::with_tempdir(tmp);
+  let test = Test::new().create_dir(".git");
 
   let justfile_path = test.justfile_path();
 
   let _tmp = test
-    .no_justfile()
-    .stderr_regex("Wrote justfile to `.*`\n")
+    .stderr_regex("wrote justfile to `.*`\n")
     .arg("--init")
-    .run();
+    .success();
 
   assert_eq!(fs::read_to_string(justfile_path).unwrap(), INIT_JUSTFILE);
 }
 
 #[test]
 fn parent_dir() {
-  let tmp = temptree! {
-    ".git": {},
-    sub: {},
-  };
+  let tmp = tempdir();
+  fs::create_dir(tmp.path().join(".git")).unwrap();
+  fs::create_dir(tmp.path().join("sub")).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path().join("sub"))
     .arg("--init")
     .output()
@@ -96,11 +84,10 @@ fn parent_dir() {
 
 #[test]
 fn alternate_marker() {
-  let tmp = temptree! {
-    "_darcs": {},
-  };
+  let tmp = tempdir();
+  fs::create_dir(tmp.path().join("_darcs")).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("--init")
     .output()
@@ -116,13 +103,10 @@ fn alternate_marker() {
 
 #[test]
 fn search_directory() {
-  let tmp = temptree! {
-    sub: {
-      ".git": {},
-    },
-  };
+  let tmp = tempdir();
+  fs::create_dir_all(tmp.path().join("sub/.git")).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("--init")
     .arg("sub/")
@@ -139,13 +123,10 @@ fn search_directory() {
 
 #[test]
 fn justfile() {
-  let tmp = temptree! {
-    sub: {
-      ".git": {},
-    },
-  };
+  let tmp = tempdir();
+  fs::create_dir_all(tmp.path().join("sub/.git")).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path().join("sub"))
     .arg("--init")
     .arg("--justfile")
@@ -163,13 +144,10 @@ fn justfile() {
 
 #[test]
 fn justfile_and_working_directory() {
-  let tmp = temptree! {
-    sub: {
-      ".git": {},
-    },
-  };
+  let tmp = tempdir();
+  fs::create_dir_all(tmp.path().join("sub/.git")).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path().join("sub"))
     .arg("--init")
     .arg("--justfile")
@@ -188,17 +166,34 @@ fn justfile_and_working_directory() {
 }
 
 #[test]
+fn justfile_name_from_invocation_directory() {
+  Test::new()
+    .create_dir(".git")
+    .args(["--init", "--justfile-name", "foo"])
+    .stderr_regex("wrote justfile to `.*`\n")
+    .expect_file("foo", INIT_JUSTFILE)
+    .success();
+}
+
+#[test]
+fn justfile_name_from_search_directory() {
+  Test::new()
+    .create_dir("sub/.git")
+    .args(["--init", "--justfile-name", "foo", "sub/"])
+    .stderr_regex("wrote justfile to `.*`\n")
+    .expect_file("sub/foo", INIT_JUSTFILE)
+    .success();
+}
+
+#[test]
 fn fmt_compatibility() {
-  let output = Test::new()
-    .no_justfile()
+  Test::new()
     .arg("--init")
-    .stderr_regex("Wrote justfile to `.*`\n")
-    .run();
-  Test::with_tempdir(output.tempdir)
-    .no_justfile()
+    .stderr_regex("wrote justfile to `.*`\n")
+    .success()
+    .test()
     .arg("--unstable")
     .arg("--check")
     .arg("--fmt")
-    .status(EXIT_SUCCESS)
-    .run();
+    .success();
 }

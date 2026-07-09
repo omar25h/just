@@ -5,13 +5,13 @@ fn ignore_leading_byte_order_mark() {
   Test::new()
     .justfile(
       "
-      \u{feff}foo:
-        echo bar
-    ",
+        \u{feff}foo:
+          echo bar
+      ",
     )
     .stderr("echo bar\n")
     .stdout("bar\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -19,21 +19,20 @@ fn non_leading_byte_order_mark_produces_error() {
   Test::new()
     .justfile(
       "
-      foo:
-        echo bar
-      \u{feff}
-    ",
+        foo:
+          echo bar
+        \u{feff}
+      ",
     )
     .stderr(
       "
-      error: Expected \'@\', \'[\', comment, end of file, end of line, or identifier, but found byte order mark
+      error: expected \'@\', \'[\', comment, end of file, end of line, or identifier, but found byte order mark
        ——▶ justfile:3:1
         │
       3 │ \u{feff}
         │ ^
       ")
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -42,13 +41,12 @@ fn dont_mention_byte_order_mark_in_errors() {
     .justfile("{")
     .stderr(
       "
-      error: Expected '@', '[', comment, end of file, end of line, or identifier, but found '{'
-       ——▶ justfile:1:1
-        │
-      1 │ {
-        │ ^
+        error: expected '@', '[', comment, end of file, end of line, or identifier, but found '{'
+         ——▶ justfile:1:1
+          │
+        1 │ {
+          │ ^
       ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }

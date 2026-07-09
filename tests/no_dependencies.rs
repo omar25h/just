@@ -13,7 +13,7 @@ fn skip_normal_dependency() {
     )
     .args(["--no-deps", "b"])
     .stdout("b\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn skip_prior_dependency() {
     )
     .args(["--no-deps", "b"])
     .stdout("b\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -37,13 +37,13 @@ fn skip_dependency_multi() {
   Test::new()
     .justfile(
       "
-          a:
-              @echo 'a'
-          b: && a
-              @echo 'b'
-          ",
+        a:
+            @echo 'a'
+        b: && a
+            @echo 'b'
+      ",
     )
     .args(["--no-deps", "b", "a"])
     .stdout("b\na\n")
-    .run();
+    .success();
 }

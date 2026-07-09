@@ -5,19 +5,22 @@ fn all() {
   Test::new()
     .justfile(
       "
-      [macos]
-      [linux]
-      [openbsd]
-      [unix]
-      [windows]
-      [no-exit-message]
-      foo:
-        exit 1
-    ",
+        [dragonfly]
+        [freebsd]
+        [linux]
+        [macos]
+        [netbsd]
+        [no-exit-message]
+        [openbsd]
+        [android]
+        [unix]
+        [windows]
+        foo:
+          exit 1
+      ",
     )
     .stderr("exit 1\n")
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -25,23 +28,43 @@ fn duplicate_attributes_are_disallowed() {
   Test::new()
     .justfile(
       "
-      [no-exit-message]
-      [no-exit-message]
-      foo:
-        echo bar
-    ",
+        [no-exit-message]
+        [no-exit-message]
+        foo:
+          echo bar
+      ",
     )
     .stderr(
       "
-      error: Recipe attribute `no-exit-message` first used on line 1 is duplicated on line 2
-       ——▶ justfile:2:2
-        │
-      2 │ [no-exit-message]
-        │  ^^^^^^^^^^^^^^^
+        error: recipe attribute `no-exit-message` first used on line 1 is duplicated on line 2
+         ——▶ justfile:2:2
+          │
+        2 │ [no-exit-message]
+          │  ^^^^^^^^^^^^^^^
       ",
     )
-    .status(1)
-    .run();
+    .failure();
+}
+
+#[test]
+fn continue_attribute_rejects_invalid_signal() {
+  Test::new()
+    .justfile(
+      "
+        [continue('SIGTERM')]
+        foo:
+      ",
+    )
+    .stderr(
+      "
+        error: invalid signal `SIGTERM`: expected `SIGHUP`, `SIGINT`, or `SIGQUIT`
+         ——▶ justfile:1:11
+          │
+        1 │ [continue('SIGTERM')]
+          │           ^^^^^^^^^
+      ",
+    )
+    .failure();
 }
 
 #[test]
@@ -49,15 +72,14 @@ fn multiple_attributes_one_line() {
   Test::new()
     .justfile(
       "
-      [macos,windows,linux,openbsd]
-      [no-exit-message]
-      foo:
-        exit 1
-    ",
+        [macos,windows,linux,openbsd,freebsd,dragonfly,netbsd,android]
+        [no-exit-message]
+        foo:
+          exit 1
+      ",
     )
     .stderr("exit 1\n")
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -65,23 +87,22 @@ fn multiple_attributes_one_line_error_message() {
   Test::new()
     .justfile(
       "
-      [macos,windows linux,openbsd]
-      [no-exit-message]
-      foo:
-        exit 1
-    ",
+        [macos,windows linux,openbsd,freebsd,dragonfly,netbsd,android]
+        [no-exit-message]
+        foo:
+          exit 1
+      ",
     )
     .stderr(
       "
-        error: Expected ']', ':', ',', or '(', but found identifier
+        error: expected ']', ':', ',', or '(', but found identifier
          ——▶ justfile:1:16
           │
-        1 │ [macos,windows linux,openbsd]
+        1 │ [macos,windows linux,openbsd,freebsd,dragonfly,netbsd,android]
           │                ^^^^^
           ",
     )
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -89,23 +110,22 @@ fn multiple_attributes_one_line_duplicate_check() {
   Test::new()
     .justfile(
       "
-      [macos, windows, linux, openbsd]
-      [linux]
-      foo:
-        exit 1
-    ",
+        [macos, windows, linux, openbsd, freebsd, dragonfly, netbsd, android]
+        [linux]
+        foo:
+          exit 1
+      ",
     )
     .stderr(
       "
-      error: Recipe attribute `linux` first used on line 1 is duplicated on line 2
-       ——▶ justfile:2:2
-        │
-      2 │ [linux]
-        │  ^^^^^
-        ",
+        error: recipe attribute `linux` first used on line 1 is duplicated on line 2
+         ——▶ justfile:2:2
+          │
+        2 │ [linux]
+          │  ^^^^^
+      ",
     )
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -113,22 +133,21 @@ fn unexpected_attribute_argument() {
   Test::new()
     .justfile(
       "
-      [private('foo')]
-      foo:
-        exit 1
-    ",
+        [private('foo')]
+        foo:
+          exit 1
+      ",
     )
     .stderr(
       "
-        error: Attribute `private` got 1 argument but takes 0 arguments
+        error: attribute `private` got 1 argument but takes 0 arguments
          ——▶ justfile:1:2
           │
         1 │ [private('foo')]
           │  ^^^^^^^
           ",
     )
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -136,16 +155,15 @@ fn multiple_metadata_attributes() {
   Test::new()
     .justfile(
       "
-      [metadata('example')]
-      [metadata('sample')]
-      [no-exit-message]
-      foo:
-        exit 1
-    ",
+        [metadata('example')]
+        [metadata('sample')]
+        [no-exit-message]
+        foo:
+          exit 1
+      ",
     )
     .stderr("exit 1\n")
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -153,16 +171,15 @@ fn multiple_metadata_attributes_with_multiple_args() {
   Test::new()
     .justfile(
       "
-      [metadata('example', 'arg1')]
-      [metadata('sample', 'argument')]
-      [no-exit-message]
-      foo:
-        exit 1
-    ",
+        [metadata('example', 'arg1')]
+        [metadata('sample', 'argument')]
+        [no-exit-message]
+        foo:
+          exit 1
+      ",
     )
     .stderr("exit 1\n")
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -170,22 +187,21 @@ fn expected_metadata_attribute_argument() {
   Test::new()
     .justfile(
       "
-      [metadata]
-      foo:
-        exit 1
-    ",
+        [metadata]
+        foo:
+          exit 1
+      ",
     )
     .stderr(
       "
-        error: Attribute `metadata` got 0 arguments but takes at least 1 argument
+        error: attribute `metadata` got 0 arguments but takes at least 1 argument
          ——▶ justfile:1:2
           │
         1 │ [metadata]
           │  ^^^^^^^^
           ",
     )
-    .status(1)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -193,20 +209,20 @@ fn doc_attribute() {
   Test::new()
     .justfile(
       "
-    # Non-document comment
-    [doc('The real docstring')]
-    foo:
-      echo foo
-  ",
+        # Non-document comment
+        [doc('The real docstring')]
+        foo:
+          echo foo
+      ",
     )
     .args(["--list"])
     .stdout(
       "
-    Available recipes:
-        foo # The real docstring
-        ",
+        Available recipes:
+            foo # The real docstring
+      ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -223,11 +239,11 @@ fn doc_attribute_suppress() {
     .args(["--list"])
     .stdout(
       "
-    Available recipes:
-        foo
-        ",
+        Available recipes:
+            foo
+      ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -243,13 +259,118 @@ fn doc_multiline() {
     .args(["--list"])
     .stdout(
       "
-    Available recipes:
-        # multiline
-        # comment
-        foo
-        ",
+        Available recipes:
+            # multiline
+            # comment
+            foo
+      ",
     )
-    .run();
+    .success();
+}
+
+#[test]
+fn doc_attribute_may_be_expression() {
+  Test::new()
+    .justfile(
+      "
+        prefix := 'hello '
+        [doc(prefix + 'world')]
+        foo:
+      ",
+    )
+    .args(["--list"])
+    .stdout(
+      "
+        Available recipes:
+            foo # hello world
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn doc_attribute_list_is_joined() {
+  Test::new()
+    .justfile(
+      "
+        set lists
+        [doc(['hello', 'world'])]
+        foo:
+      ",
+    )
+    .env("JUST_UNSTABLE", "1")
+    .args(["--list"])
+    .stdout(
+      "
+        Available recipes:
+            foo # hello world
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn doc_attribute_empty_list_is_no_doc() {
+  Test::new()
+    .justfile(
+      "
+        set lists
+        [doc([])]
+        foo:
+      ",
+    )
+    .env("JUST_UNSTABLE", "1")
+    .args(["--list"])
+    .stdout(
+      "
+        Available recipes:
+            foo
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn doc_attribute_cannot_reference_undefined_variable() {
+  Test::new()
+    .justfile(
+      "
+        [doc(undefined)]
+        foo:
+      ",
+    )
+    .stderr(
+      "
+        error: variable `undefined` not defined
+         ——▶ justfile:1:6
+          │
+        1 │ [doc(undefined)]
+          │      ^^^^^^^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn doc_attribute_cannot_reference_non_const_variable() {
+  Test::new()
+    .justfile(
+      "
+        bar := `echo BAR`
+        [doc(bar)]
+        foo:
+      ",
+    )
+    .stderr(
+      "
+        error: cannot access non-const variable `bar` in const context
+         ——▶ justfile:2:6
+          │
+        2 │ [doc(bar)]
+          │      ^^^
+      ",
+    )
+    .failure();
 }
 
 #[test]
@@ -264,11 +385,11 @@ fn extension() {
       ",
     )
     .stdout_regex(r"*baz\.txt\n")
-    .run();
+    .success();
 }
 
 #[test]
-fn extension_on_linewise_error() {
+fn extension_on_shell_error() {
   Test::new()
     .justfile(
       "
@@ -278,15 +399,14 @@ fn extension_on_linewise_error() {
     )
     .stderr(
       "
-  error: Recipe `baz` has invalid attribute `extension`
-   ——▶ justfile:2:1
-    │
-  2 │ baz:
-    │ ^^^
-",
+        error: shell recipe `baz` has script recipe attribute `extension`
+         ——▶ justfile:2:1
+          │
+        2 │ baz:
+          │ ^^^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -301,13 +421,517 @@ fn duplicate_non_repeatable_attributes_are_forbidden() {
     )
     .stderr(
       "
-  error: Recipe attribute `confirm` first used on line 1 is duplicated on line 2
-   ——▶ justfile:2:2
-    │
-  2 │ [confirm: 'no']
-    │  ^^^^^^^
-",
+        error: recipe attribute `confirm` first used on line 1 is duplicated on line 2
+         ——▶ justfile:2:2
+          │
+        2 │ [confirm: 'no']
+          │  ^^^^^^^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
+}
+
+#[test]
+fn shell_expanded_strings_can_be_used_in_attributes() {
+  Test::new()
+    .justfile(
+      "
+        [doc(x'foo')]
+        bar:
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn env_attribute_single() {
+  Test::new()
+    .justfile(
+      "
+        [env('MY_VAR', 'my_value')]
+        foo:
+          @echo $MY_VAR
+      ",
+    )
+    .stdout("my_value\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_multiple() {
+  Test::new()
+    .justfile(
+      "
+        [env('VAR1', 'value1')]
+        [env('VAR2', 'value 2')]
+        foo:
+          @echo $VAR1 $VAR2
+      ",
+    )
+    .stdout("value1 value 2\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_with_expression() {
+  Test::new()
+    .justfile(
+      "
+        suffix := 'world'
+
+        [env('GREETING', 'hello ' + suffix)]
+        foo:
+          @echo $GREETING
+      ",
+    )
+    .stdout("hello world\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_name_with_expression() {
+  Test::new()
+    .justfile(
+      "
+        prefix := 'MY_'
+
+        [env(prefix + 'VAR', 'value')]
+        foo:
+          @echo $MY_VAR
+      ",
+    )
+    .stdout("value\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_with_expression_in_script() {
+  Test::new()
+    .justfile(
+      "
+        suffix := 'world'
+
+        [env('GREETING', 'hello ' + suffix)]
+        foo:
+          #!/bin/sh
+          echo $GREETING
+      ",
+    )
+    .stdout("hello world\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_in_recipe_params() {
+  Test::new()
+    .justfile(
+      "
+        [env('foo', 'bar')]
+        baz x=`echo ${foo}.txt`:
+            @echo {{x}}
+      ",
+    )
+    .stdout("bar.txt\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_value_cannot_reference_parameter() {
+  Test::new()
+    .justfile(
+      "
+        [env('TARGET', target)]
+        deploy target:
+      ",
+    )
+    .stderr(
+      "
+        error: variable `target` not defined
+         ——▶ justfile:1:16
+          │
+        1 │ [env('TARGET', target)]
+          │                ^^^^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn env_attribute_name_cannot_reference_parameter() {
+  Test::new()
+    .justfile(
+      "
+        [env(name, 'value')]
+        foo name:
+      ",
+    )
+    .stderr(
+      "
+        error: variable `name` not defined
+         ——▶ justfile:1:6
+          │
+        1 │ [env(name, 'value')]
+          │      ^^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn env_attribute_expression_dump() {
+  Test::new()
+    .justfile(
+      "
+        suffix := 'world'
+
+        [env('GREETING', 'hello ' + suffix)]
+        foo:
+          echo $GREETING
+      ",
+    )
+    .arg("--dump")
+    .stdout(
+      "
+        suffix := 'world'
+
+        [env('GREETING', 'hello ' + suffix)]
+        foo:
+            echo $GREETING
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn env_attribute_not_in_env_function() {
+  Test::new()
+    .justfile(
+      "
+
+        [env('foo', 'bar')]
+        baz:
+          @echo {{ env('foo') }}.txt
+
+      ",
+    )
+    .stderr(
+      "
+        error: call to function `env` failed: environment variable `foo` not present
+         ——▶ justfile:4:12
+          │
+        4 │   @echo {{ env('foo') }}.txt
+          │            ^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn env_attribute_too_few_arguments() {
+  Test::new()
+    .justfile(
+      "
+        [env('MY_VAR')]
+        foo:
+          echo bar
+      ",
+    )
+    .stderr(
+      "
+        error: attribute `env` got 1 argument but takes 2 arguments
+         ——▶ justfile:1:2
+          │
+        1 │ [env('MY_VAR')]
+          │  ^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn env_attribute_too_many_arguments() {
+  Test::new()
+    .justfile(
+      "
+        [env('A', 'B', 'C')]
+        foo:
+          echo bar
+      ",
+    )
+    .stderr(
+      "
+        error: attribute `env` got 3 arguments but takes 2 arguments
+         ——▶ justfile:1:2
+          │
+        1 │ [env('A', 'B', 'C')]
+          │  ^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn env_attribute_overrides_export() {
+  Test::new()
+    .justfile(
+      "
+        export FOO := 'export'
+
+        [env('FOO', 'attribute')]
+        bar:
+          @echo $FOO
+      ",
+    )
+    .stdout("attribute\n")
+    .success();
+}
+
+#[test]
+fn env_attribute_overrides_export_in_script() {
+  Test::new()
+    .justfile(
+      "
+        export FOO := 'export'
+
+        [env('FOO', 'attribute')]
+        bar:
+          #!/bin/sh
+          echo $FOO
+      ",
+    )
+    .stdout("attribute\n")
+    .success();
+}
+
+#[test]
+fn cache_extra_dump() {
+  Test::new()
+    .justfile(
+      "
+        set lists
+
+        [cache(extra = 'a', inputs = ['foo'], outputs = ['bar'])]
+        [script]
+        baz:
+          echo baz
+      ",
+    )
+    .unstable()
+    .arg("--dump")
+    .stdout(
+      "
+        set lists
+
+        [cache(extra='a', inputs=['foo'], outputs=['bar'])]
+        [script]
+        baz:
+            echo baz
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn cache_inputs_dump() {
+  Test::new()
+    .justfile(
+      "
+        set lists
+
+        [cache(inputs = ['foo', 'bar'])]
+        [script]
+        baz:
+          echo baz
+      ",
+    )
+    .unstable()
+    .arg("--dump")
+    .stdout(
+      "
+        set lists
+
+        [cache(inputs=['foo', 'bar'])]
+        [script]
+        baz:
+            echo baz
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn cache_outputs_dump() {
+  Test::new()
+    .justfile(
+      "
+        set lists
+
+        [cache(inputs = ['foo'], outputs = ['bar'])]
+        [script]
+        baz:
+          echo baz
+      ",
+    )
+    .unstable()
+    .arg("--dump")
+    .stdout(
+      "
+        set lists
+
+        [cache(inputs=['foo'], outputs=['bar'])]
+        [script]
+        baz:
+            echo baz
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn unknown_keyword() {
+  Test::new()
+    .justfile(
+      "
+        [cache(input = 'foo')]
+        [script]
+        baz:
+          echo baz
+      ",
+    )
+    .unstable()
+    .stderr(
+      "
+        error: unknown key `input` for `cache` attribute
+         ——▶ justfile:1:8
+          │
+        1 │ [cache(input = 'foo')]
+          │        ^^^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn duplicate_keyword_argument() {
+  Test::new()
+    .justfile(
+      "
+        [arg('bar', long='a', long='b')]
+        foo bar:
+      ",
+    )
+    .stderr(
+      "
+        error: duplicate key `long` for `arg` attribute
+         ——▶ justfile:1:23
+          │
+        1 │ [arg('bar', long='a', long='b')]
+          │                       ^^^^
+      ",
+    )
+    .failure();
+}
+#[test]
+fn env_attribute_duplicate_last_wins() {
+  Test::new()
+    .justfile(
+      "
+        [env('VAR1', 'value1')]
+        [env('VAR1', 'value 2')]
+        foo:
+          @echo $VAR1
+      ",
+    )
+    .stdout("value 2\n")
+    .success();
+}
+
+#[test]
+fn extra_keyword_error() {
+  Test::new()
+    .justfile(
+      "
+        [arg('bar', pattern='BAR', foo='foo')]
+        foo bar:
+      ",
+    )
+    .args(["foo", "BAR"])
+    .stderr(
+      "
+        error: unknown key `foo` for `arg` attribute
+         ——▶ justfile:1:28
+          │
+        1 │ [arg('bar', pattern='BAR', foo='foo')]
+          │                            ^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn split_across_multiple_lines() {
+  Test::new()
+    .justfile(
+      "
+        [arg(
+          'bar',
+          pattern='BAR'
+        )]
+        foo bar:
+      ",
+    )
+    .args(["foo", "BAR"])
+    .success();
+}
+
+#[test]
+fn optional_trailing_comma() {
+  Test::new()
+    .justfile(
+      "
+        [arg(
+          'bar',
+          pattern='BAR',
+        )]
+        foo bar:
+      ",
+    )
+    .args(["foo", "BAR"])
+    .success();
+}
+
+#[test]
+fn positional_arguments_cannot_follow_keyword_arguments() {
+  Test::new()
+    .justfile(
+      "
+        [arg(pattern='BAR', 'bar')]
+        foo bar:
+      ",
+    )
+    .args(["foo", "BAR"])
+    .stderr(
+      "
+        error: positional attribute arguments cannot follow keyword attribute arguments
+         ——▶ justfile:1:21
+          │
+        1 │ [arg(pattern='BAR', 'bar')]
+          │                     ^^^^^
+      ",
+    )
+    .failure();
+}
+
+#[test]
+fn env_attribute_visible_to_backticks_in_body() {
+  Test::new()
+    .justfile(
+      "
+        [env('MY_VAR', 'my_value')]
+        foo:
+          @echo {{ `echo $MY_VAR` }}
+      ",
+    )
+    .stdout("my_value\n")
+    .success();
 }

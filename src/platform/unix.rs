@@ -8,7 +8,7 @@ impl PlatformInterface for Platform {
     working_directory: Option<&Path>,
   ) -> Result<Command, OutputError> {
     // shebang scripts can be executed directly on unix
-    let mut command = Command::new(path);
+    let mut command = Command::resolve(path);
 
     if let Some(working_directory) = working_directory {
       command.current_dir(working_directory);
@@ -36,11 +36,7 @@ impl PlatformInterface for Platform {
     exit_status.signal()
   }
 
-  fn convert_native_path(
-    _config: &Config,
-    _working_directory: &Path,
-    path: &Path,
-  ) -> FunctionResult {
+  fn convert_native_path(_config: &Config, _working_directory: &Path, path: &Path) -> StringResult {
     path
       .to_str()
       .map(str::to_string)

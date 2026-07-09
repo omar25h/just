@@ -2,8 +2,9 @@ use {super::*, CompileErrorKind::*};
 
 #[derive(Default)]
 pub(crate) struct Analyzer<'run, 'src> {
-  aliases: Table<'src, Alias<'src, Namepath<'src>>>,
+  aliases: Table<'src, Alias<'src>>,
   assignments: Vec<&'run Binding<'src, Expression<'src>>>,
+  functions: Vec<&'run FunctionDefinition<'src>>,
   modules: Table<'src, Justfile<'src>>,
   recipes: Vec<&'run Recipe<'src, UnresolvedDependency<'src>>>,
   sets: Table<'src, Set<'src>>,
@@ -13,88 +14,129 @@ pub(crate) struct Analyzer<'run, 'src> {
 
 impl<'run, 'src> Analyzer<'run, 'src> {
   pub(crate) fn analyze(
-    asts: &'run HashMap<PathBuf, Ast<'src>>,
+    asts: &'run HashMap<(Modulepath, PathBuf), Ast<'src>>,
+    config: &Config,
     doc: Option<String>,
-    groups: &[String],
+    groups: &[StringLiteral<'src>],
     loaded: &[PathBuf],
+    module_path: &Modulepath,
     name: Option<Name<'src>>,
+    overrides: &mut HashMap<Number, String>,
     paths: &HashMap<PathBuf, PathBuf>,
+    private: bool,
     root: &Path,
   ) -> CompileResult<'src, Justfile<'src>> {
-    Self::default().justfile(asts, doc, groups, loaded, name, paths, root)
+    Self::default().justfile(
+      asts,
+      config,
+      doc,
+      groups,
+      loaded,
+      module_path,
+      name,
+      overrides,
+      paths,
+      private,
+      root,
+    )
   }
 
   fn justfile(
     mut self,
-    asts: &'run HashMap<PathBuf, Ast<'src>>,
+    asts: &'run HashMap<(Modulepath, PathBuf), Ast<'src>>,
+    config: &Config,
     doc: Option<String>,
-    groups: &[String],
+    groups: &[StringLiteral<'src>],
     loaded: &[PathBuf],
+    module_path: &Modulepath,
     name: Option<Name<'src>>,
+    overrides: &mut HashMap<Number, String>,
     paths: &HashMap<PathBuf, PathBuf>,
+    private: bool,
     root: &Path,
   ) -> CompileResult<'src, Justfile<'src>> {
+    let mut absent_modules = BTreeSet::new();
     let mut definitions = HashMap::new();
     let mut imports = HashSet::new();
+    let mut list_features = Vec::new();
+    let mut module_docs: Vec<(&str, Expression)> = Vec::new();
     let mut unstable_features = BTreeSet::new();
 
     let mut stack = Vec::new();
-    let ast = asts.get(root).unwrap();
+    let ast = asts.get(&(module_path.clone(), root.to_owned())).unwrap();
     stack.push(ast);
 
     while let Some(ast) = stack.pop() {
       unstable_features.extend(&ast.unstable_features);
 
+      list_features.extend(&ast.list_features);
+
       for item in &ast.items {
+        if !item.is_enabled() {
+          continue;
+        }
+
         match item {
           Item::Alias(alias) => {
-            Self::define(&mut definitions, alias.name, "alias", false)?;
+            Self::define(&mut definitions, alias.name, ItemKind::Alias, false)?;
             self.aliases.insert(alias.clone());
           }
           Item::Assignment(assignment) => {
             self.assignments.push(assignment);
           }
           Item::Comment(_) => (),
+          Item::Function(function) => {
+            self.functions.push(function);
+          }
           Item::Import { absolute, .. } => {
-            if let Some(absolute) = absolute {
-              if imports.insert(absolute) {
-                stack.push(asts.get(absolute).unwrap());
-              }
+            if let Some(absolute) = absolute
+              && imports.insert(absolute)
+            {
+              stack.push(asts.get(&(module_path.clone(), absolute.clone())).unwrap());
             }
           }
           Item::Module {
             absolute,
+            attributes,
             doc,
-            groups,
             name,
+            optional,
             ..
           } => {
             if let Some(absolute) = absolute {
-              Self::define(&mut definitions, *name, "module", false)?;
+              Self::define(&mut definitions, *name, ItemKind::Module, false)?;
               self.modules.insert(Self::analyze(
                 asts,
+                config,
                 doc.clone(),
-                groups.as_slice(),
+                &attributes.groups(),
                 loaded,
+                &module_path.join(name.lexeme()),
                 Some(*name),
+                overrides,
                 paths,
+                attributes.private(),
                 absolute,
               )?);
+              if let Some(Attribute::Doc(Some(expression))) = attributes.get(AttributeKind::Doc) {
+                module_docs.push((name.lexeme(), expression.clone()));
+              }
+            } else if *optional {
+              absent_modules.insert(name.lexeme().to_string());
             }
           }
+          Item::Newline => {}
           Item::Recipe(recipe) => {
-            if recipe.enabled() {
-              Self::analyze_recipe(recipe)?;
-              self.recipes.push(recipe);
-            }
+            Self::analyze_recipe(recipe)?;
+            self.recipes.push(recipe);
           }
-          Item::Set(set) => {
+          Item::Setting(set) => {
             self.analyze_set(set)?;
             self.sets.insert(set.clone());
           }
-          Item::Unexport { name } => {
+          Item::Unexport { name, .. } => {
             if !self.unexports.insert(name.lexeme().to_string()) {
-              return Err(name.token.error(DuplicateUnexport {
+              return Err(name.error(DuplicateUnexport {
                 variable: name.lexeme(),
               }));
             }
@@ -105,77 +147,271 @@ impl<'run, 'src> Analyzer<'run, 'src> {
       self.warnings.extend(ast.warnings.iter().cloned());
     }
 
-    let settings = Settings::from_table(self.sets);
+    let mut allow_duplicate_variables = false;
+
+    for (_name, set) in &self.sets {
+      if let Setting::AllowDuplicateVariables(value) = set.value {
+        allow_duplicate_variables = value;
+      }
+    }
 
     let mut assignments: Table<'src, Assignment<'src>> = Table::default();
     for assignment in self.assignments {
       let variable = assignment.name.lexeme();
 
-      if !settings.allow_duplicate_variables && assignments.contains_key(variable) {
-        return Err(assignment.name.token.error(DuplicateVariable { variable }));
+      if !allow_duplicate_variables && assignments.contains_key(variable) {
+        return Err(assignment.name.error(DuplicateVariable { variable }));
       }
 
-      if assignments.get(variable).map_or(true, |original| {
-        assignment.file_depth <= original.file_depth
-      }) {
+      if assignments
+        .get(variable)
+        .is_none_or(|original| assignment.file_depth <= original.file_depth)
+      {
         assignments.insert(assignment.clone());
       }
 
       if self.unexports.contains(variable) {
-        return Err(assignment.name.token.error(ExportUnexported { variable }));
+        return Err(assignment.name.error(ExportUnexported { variable }));
       }
     }
 
-    AssignmentResolver::resolve_assignments(&assignments)?;
+    let mut functions = Table::<FunctionDefinition>::default();
+    for function in self.functions {
+      let name = function.name.lexeme();
+      if let Some(first) = functions.get(name) {
+        return Err(function.name.error(Redefinition {
+          first_type: ItemKind::Function,
+          second_type: ItemKind::Function,
+          name,
+          first: first.name.line,
+        }));
+      }
+      functions.insert(function.clone());
+    }
+
+    let (bindings, evaluation_order) =
+      VariableResolver::resolve_assignments(&mut assignments, &mut functions)?;
+
+    let variable_resolver = VariableResolver::new(&assignments, bindings, &functions);
+
+    let mut variable_references = HashSet::new();
+
+    for set in self.sets.values_mut() {
+      for expression in set.value.expressions_mut() {
+        variable_resolver.resolve_expression(
+          expression,
+          &ExpressionContext::new(),
+          &mut variable_references,
+        )?;
+      }
+    }
+
+    for ((path, name), value) in &config.overrides {
+      if *path == ast.module_path
+        && let Some(assignment) = assignments.get(name)
+      {
+        overrides.insert(assignment.number, value.clone());
+      }
+    }
+
+    let scope = Scope::root();
+
+    let mut evaluator = {
+      let lists = self
+        .sets
+        .values()
+        .any(|set| matches!(set.value, Setting::Lists(true)));
+
+      for attribute in self.recipes.iter().flat_map(|recipe| &recipe.attributes) {
+        match attribute {
+          Attribute::Arg {
+            help_property,
+            pattern_property,
+            ..
+          } => {
+            if let Some((_, expression)) = help_property {
+              variable_resolver.collect_references(expression, &mut variable_references);
+            }
+            if let Some((_, expression)) = pattern_property {
+              variable_resolver.collect_references(expression, &mut variable_references);
+            }
+          }
+          Attribute::Doc(Some(expression)) => {
+            variable_resolver.collect_references(expression, &mut variable_references);
+          }
+          _ => {}
+        }
+      }
+
+      for (_name, expression) in &module_docs {
+        variable_resolver.collect_references(expression, &mut variable_references);
+      }
+
+      Evaluator::evaluate_const_assignments(
+        &assignments,
+        overrides,
+        &scope,
+        &variable_references,
+        lists,
+      )?
+    };
+
+    let settings = evaluator.evaluate_sets(self.sets)?;
+
+    if !settings.lists {
+      for (feature, token) in list_features {
+        if feature.function() && functions.contains_key(token.lexeme()) {
+          continue;
+        }
+
+        return Err(token.error(CompileErrorKind::ListFeature(feature)));
+      }
+    }
+
+    for (name, mut expression) in module_docs {
+      variable_resolver.resolve_expression(
+        &mut expression,
+        &ExpressionContext::new(),
+        &mut variable_references,
+      )?;
+      let value = evaluator.evaluate_value_const(&expression)?;
+      self.modules.get_mut(name).unwrap().doc = if value.is_empty() {
+        None
+      } else {
+        Some(value.join())
+      };
+    }
 
     let mut deduplicated_recipes = Table::<'src, UnresolvedRecipe<'src>>::default();
     for recipe in self.recipes {
       Self::define(
         &mut definitions,
         recipe.name,
-        "recipe",
+        ItemKind::Recipe,
         settings.allow_duplicate_recipes,
       )?;
 
       if deduplicated_recipes
         .get(recipe.name.lexeme())
-        .map_or(true, |original| recipe.file_depth <= original.file_depth)
+        .is_none_or(|original| recipe.file_depth <= original.file_depth)
       {
         deduplicated_recipes.insert(recipe.clone());
       }
+
+      if !recipe.is_script(&settings) {
+        let mut continued = false;
+        for line in &recipe.body {
+          let comment = !continued && settings.ignore_comments && line.is_comment();
+
+          if !continued {
+            let sigils = line.sigils(&settings);
+
+            if sigils.contains(&Sigil::Guard) && sigils.contains(&Sigil::Infallible) {
+              let Fragment::Text { token } = line.fragments.first().unwrap() else {
+                unreachable!();
+              };
+              return Err(token.error(GuardAndInfallibleSigil));
+            }
+
+            if let Some(Fragment::Text { token }) = line.fragments.first() {
+              let text = token.lexeme();
+
+              if text.starts_with(' ') || text.starts_with('\t') {
+                return Err(token.error(ExtraLeadingWhitespace));
+              }
+            }
+          }
+
+          continued = !comment && line.is_continuation();
+        }
+
+        for attribute in [AttributeKind::Cache, AttributeKind::Extension] {
+          if let Some(attribute) = recipe.attributes.get(attribute) {
+            return Err(recipe.name.error(InvalidShellRecipeAttribute {
+              attribute: Box::new(attribute.clone()),
+              recipe: recipe.name.lexeme(),
+            }));
+          }
+        }
+      }
     }
 
-    let recipes = RecipeResolver::resolve_recipes(
-      &assignments,
+    let (recipes, disabled_recipes) = RecipeResolver::resolve_recipes(
+      &absent_modules,
+      &mut evaluator,
       &ast.module_path,
       &self.modules,
       &settings,
       deduplicated_recipes,
+      &variable_resolver,
     )?;
 
-    let mut aliases = Table::new();
-    while let Some(alias) = self.aliases.pop() {
-      aliases.insert(Self::resolve_alias(&self.modules, &recipes, alias)?);
-    }
-
-    for recipe in recipes.values() {
-      if recipe.attributes.contains(AttributeDiscriminant::Script) {
-        unstable_features.insert(UnstableFeature::ScriptAttribute);
-        break;
+    let mut recipe_aliases = Table::new();
+    let mut module_aliases = Table::new();
+    let mut disabled_aliases = Table::new();
+    for alias in self.aliases.into_values() {
+      if let Some(resolution) =
+        Resolution::resolve_module(&alias.target, &absent_modules, &self.modules)
+      {
+        match resolution {
+          Resolution::Resolved(target) => {
+            module_aliases.insert(Alias {
+              attributes: alias.attributes,
+              name: alias.name,
+              target,
+            });
+          }
+          Resolution::Disabled(modules) => {
+            disabled_aliases.insert(Disabled {
+              modules,
+              name: alias.name,
+            });
+          }
+        }
+      } else if let Some(resolution) = Resolution::resolve_recipe(
+        &alias.target,
+        &absent_modules,
+        &disabled_recipes,
+        &self.modules,
+        &recipes,
+      ) {
+        match resolution {
+          Resolution::Resolved(target) => {
+            recipe_aliases.insert(alias.resolve(target));
+          }
+          Resolution::Disabled(modules) => {
+            disabled_aliases.insert(Disabled {
+              modules,
+              name: alias.name,
+            });
+          }
+        }
+      } else {
+        return Err(alias.name.error(UnknownAliasTarget {
+          alias: alias.name.lexeme(),
+          target: alias.target,
+        }));
       }
-    }
-
-    if settings.script_interpreter.is_some() {
-      unstable_features.insert(UnstableFeature::ScriptInterpreterSetting);
     }
 
     let source = root.to_owned();
     let root = paths.get(root).unwrap();
 
-    Ok(Justfile {
-      aliases,
-      assignments,
-      default: recipes
+    let mut default = None;
+    for recipe in recipes.values() {
+      if recipe.attributes.contains(AttributeKind::Default) {
+        if default.is_some() {
+          return Err(recipe.name.error(CompileErrorKind::DuplicateDefault {
+            recipe: recipe.name.lexeme(),
+          }));
+        }
+
+        default = Some(Arc::clone(recipe));
+      }
+    }
+
+    let default = default.or_else(|| {
+      recipes
         .values()
         .filter(|recipe| recipe.name.path == root)
         .fold(None, |accumulator, next| match accumulator {
@@ -185,13 +421,26 @@ impl<'run, 'src> Analyzer<'run, 'src> {
           } else {
             Arc::clone(next)
           }),
-        }),
+        })
+    });
+
+    Ok(Justfile {
+      absent_modules,
+      assignments,
+      default,
+      disabled_aliases,
+      disabled_recipes,
       doc: doc.filter(|doc| !doc.is_empty()),
+      evaluation_order,
+      functions,
       groups: groups.into(),
       loaded: loaded.into(),
+      module_aliases,
       module_path: ast.module_path.clone(),
       modules: self.modules,
       name,
+      private,
+      recipe_aliases,
       recipes,
       settings,
       source,
@@ -203,26 +452,26 @@ impl<'run, 'src> Analyzer<'run, 'src> {
   }
 
   fn define(
-    definitions: &mut HashMap<&'src str, (&'static str, Name<'src>)>,
+    definitions: &mut HashMap<&'src str, (ItemKind, Name<'src>)>,
     name: Name<'src>,
-    second_type: &'static str,
+    second_type: ItemKind,
     duplicates_allowed: bool,
   ) -> CompileResult<'src> {
-    if let Some((first_type, original)) = definitions.get(name.lexeme()) {
-      if !(*first_type == second_type && duplicates_allowed) {
-        let ((first_type, second_type), (original, redefinition)) = if name.line < original.line {
-          ((second_type, *first_type), (name, *original))
-        } else {
-          ((*first_type, second_type), (*original, name))
-        };
+    if let Some((first_type, original)) = definitions.get(name.lexeme())
+      && !(*first_type == second_type && duplicates_allowed)
+    {
+      let ((first_type, second_type), (original, redefinition)) = if name.line < original.line {
+        ((second_type, *first_type), (name, *original))
+      } else {
+        ((*first_type, second_type), (*original, name))
+      };
 
-        return Err(redefinition.token.error(Redefinition {
-          first_type,
-          second_type,
-          name: name.lexeme(),
-          first: original.line,
-        }));
-      }
+      return Err(redefinition.token.error(Redefinition {
+        first_type,
+        second_type,
+        name: name.lexeme(),
+        first: original.line,
+      }));
     }
 
     definitions.insert(name.lexeme(), (second_type, name));
@@ -236,7 +485,7 @@ impl<'run, 'src> Analyzer<'run, 'src> {
 
     for parameter in &recipe.parameters {
       if parameters.contains(parameter.name.lexeme()) {
-        return Err(parameter.name.token.error(DuplicateParameter {
+        return Err(parameter.name.error(DuplicateParameter {
           recipe: recipe.name.lexeme(),
           parameter: parameter.name.lexeme(),
         }));
@@ -246,7 +495,7 @@ impl<'run, 'src> Analyzer<'run, 'src> {
 
       if parameter.default.is_some() {
         passed_default = true;
-      } else if passed_default && parameter.is_required() {
+      } else if passed_default && parameter.is_required() && !parameter.is_option() {
         return Err(
           parameter
             .name
@@ -255,31 +504,6 @@ impl<'run, 'src> Analyzer<'run, 'src> {
               parameter: parameter.name.lexeme(),
             }),
         );
-      }
-    }
-
-    let mut continued = false;
-    for line in &recipe.body {
-      if !recipe.is_script() && !continued {
-        if let Some(Fragment::Text { token }) = line.fragments.first() {
-          let text = token.lexeme();
-
-          if text.starts_with(' ') || text.starts_with('\t') {
-            return Err(token.error(ExtraLeadingWhitespace));
-          }
-        }
-      }
-
-      continued = line.is_continuation();
-    }
-
-    if !recipe.is_script() {
-      if let Some(attribute) = recipe.attributes.get(AttributeDiscriminant::Extension) {
-        return Err(recipe.name.error(InvalidAttribute {
-          item_kind: "Recipe",
-          item_name: recipe.name.lexeme(),
-          attribute: attribute.clone(),
-        }));
       }
     }
 
@@ -294,37 +518,19 @@ impl<'run, 'src> Analyzer<'run, 'src> {
       }));
     }
 
+    if let Some(second) = Keyword::from_lexeme(set.name.lexeme()) {
+      for &first in set.value.conflicts() {
+        if let Some(conflict) = self.sets.get(first.lexeme()) {
+          return Err(set.name.error(IncompatibleSettings {
+            first,
+            first_line: conflict.name.line,
+            second,
+          }));
+        }
+      }
+    }
+
     Ok(())
-  }
-
-  fn resolve_alias<'a>(
-    modules: &'a Table<'src, Justfile<'src>>,
-    recipes: &'a Table<'src, Arc<Recipe<'src>>>,
-    alias: Alias<'src, Namepath<'src>>,
-  ) -> CompileResult<'src, Alias<'src>> {
-    match Self::resolve_recipe(&alias.target, modules, recipes) {
-      Some(target) => Ok(alias.resolve(target)),
-      None => Err(alias.name.token.error(UnknownAliasTarget {
-        alias: alias.name.lexeme(),
-        target: alias.target,
-      })),
-    }
-  }
-
-  pub(crate) fn resolve_recipe<'a>(
-    path: &Namepath<'src>,
-    mut modules: &'a Table<'src, Justfile<'src>>,
-    mut recipes: &'a Table<'src, Arc<Recipe<'src>>>,
-  ) -> Option<Arc<Recipe<'src>>> {
-    let (name, path) = path.split_last();
-
-    for name in path {
-      let module = modules.get(name.lexeme())?;
-      modules = &module.modules;
-      recipes = &module.recipes;
-    }
-
-    recipes.get(name.lexeme()).cloned()
   }
 }
 
@@ -339,7 +545,12 @@ mod tests {
     line: 1,
     column: 6,
     width: 3,
-    kind: Redefinition { first_type: "alias", second_type: "alias", name: "foo", first: 0 },
+    kind: Redefinition {
+      first_type: ItemKind::Alias,
+      second_type: ItemKind::Alias,
+      name: "foo",
+      first: 0,
+    },
   }
 
   analysis_error! {
@@ -372,7 +583,12 @@ mod tests {
     line: 3,
     column: 0,
     width: 3,
-    kind: Redefinition { first_type: "alias", second_type: "recipe", name: "foo", first: 2 },
+    kind: Redefinition {
+      first_type: ItemKind::Alias,
+      second_type: ItemKind::Recipe,
+      name: "foo",
+      first: 2,
+    },
   }
 
   analysis_error! {
@@ -382,27 +598,32 @@ mod tests {
     line: 2,
     column: 6,
     width: 3,
-    kind: Redefinition { first_type: "recipe", second_type: "alias", name: "foo", first: 0 },
+    kind: Redefinition {
+      first_type: ItemKind::Recipe,
+      second_type: ItemKind::Alias,
+      name: "foo",
+      first: 0,
+    },
   }
 
   analysis_error! {
     name:   required_after_default,
     input:  "hello arg='foo' bar:",
-    offset:  16,
+    offset: 16,
     line:   0,
     column: 16,
     width:  3,
-    kind:   RequiredParameterFollowsDefaultParameter{parameter: "bar"},
+    kind:   RequiredParameterFollowsDefaultParameter { parameter: "bar" },
   }
 
   analysis_error! {
     name:   duplicate_parameter,
     input:  "a b b:",
-    offset:  4,
+    offset: 4,
     line:   0,
     column: 4,
     width:  1,
-    kind:   DuplicateParameter{recipe: "a", parameter: "b"},
+    kind:   DuplicateParameter { recipe: "a", parameter: "b" },
   }
 
   analysis_error! {
@@ -412,7 +633,7 @@ mod tests {
     line:   0,
     column: 5,
     width:  1,
-    kind:   DuplicateParameter{recipe: "a", parameter: "b"},
+    kind:   DuplicateParameter { recipe: "a", parameter: "b" },
   }
 
   analysis_error! {
@@ -422,7 +643,12 @@ mod tests {
     line:   2,
     column: 0,
     width:  1,
-    kind:   Redefinition { first_type: "recipe", second_type: "recipe", name: "a", first: 0 },
+    kind:   Redefinition {
+      first: 0,
+      first_type: ItemKind::Recipe,
+      name: "a",
+      second_type: ItemKind::Recipe,
+    },
   }
 
   analysis_error! {
@@ -432,7 +658,7 @@ mod tests {
     line:   1,
     column: 0,
     width:  1,
-    kind:   DuplicateVariable{variable: "a"},
+    kind:   DuplicateVariable { variable: "a" },
   }
 
   analysis_error! {
@@ -443,5 +669,133 @@ mod tests {
     column: 1,
     width:  6,
     kind:   ExtraLeadingWhitespace,
+  }
+
+  analysis_error! {
+    name:   undefined_function,
+    input:  "a := foo()",
+    offset: 5,
+    line:   0,
+    column: 5,
+    width:  3,
+    kind:   UndefinedFunction { function: "foo" },
+  }
+
+  analysis_error! {
+    name:   undefined_function_in_interpolation,
+    input:  "a:\n echo {{bar()}}",
+    offset: 11,
+    line:   1,
+    column: 8,
+    width:  3,
+    kind:   UndefinedFunction { function: "bar" },
+  }
+
+  analysis_error! {
+    name:   undefined_function_in_default,
+    input:  "a f=baz():",
+    offset: 4,
+    line:   0,
+    column: 4,
+    width:  3,
+    kind:   UndefinedFunction { function: "baz" },
+  }
+
+  analysis_error! {
+    name: function_argument_count_nullary,
+    input: "x := arch('foo')",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 4,
+    kind: FunctionArgumentCountMismatch {
+      function: "arch",
+      arguments: 1,
+      expected: 0..=0,
+    },
+  }
+
+  analysis_error! {
+    name: function_argument_count_unary,
+    input: "x := env_var()",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 7,
+    kind: FunctionArgumentCountMismatch {
+      function: "env_var",
+      arguments: 0,
+      expected: 1..=1,
+    },
+  }
+
+  analysis_error! {
+    name: function_argument_count_too_high_unary_opt,
+    input: "x := env('foo', 'foo', 'foo')",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 3,
+    kind: FunctionArgumentCountMismatch {
+      function: "env",
+      arguments: 3,
+      expected: 1..=2,
+    },
+  }
+
+  analysis_error! {
+    name: function_argument_count_too_low_unary_opt,
+    input: "x := env()",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 3,
+    kind: FunctionArgumentCountMismatch {
+      function: "env",
+      arguments: 0,
+      expected: 1..=2,
+    },
+  }
+
+  analysis_error! {
+    name: function_argument_count_binary,
+    input: "x := env_var_or_default('foo')",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 18,
+    kind: FunctionArgumentCountMismatch {
+      function: "env_var_or_default",
+      arguments: 1,
+      expected: 2..=2,
+    },
+  }
+
+  analysis_error! {
+    name: function_argument_count_binary_plus,
+    input: "x := join('foo')",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 4,
+    kind: FunctionArgumentCountMismatch {
+      function: "join",
+      arguments: 1,
+      expected: 2..=usize::MAX,
+    },
+  }
+
+  analysis_error! {
+    name: function_argument_count_ternary,
+    input: "x := replace('foo')",
+    offset: 5,
+    line: 0,
+    column: 5,
+    width: 7,
+    kind: FunctionArgumentCountMismatch {
+      function: "replace",
+      arguments: 1,
+      expected: 3..=3,
+    },
   }
 }

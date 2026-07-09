@@ -47,6 +47,7 @@ item          : alias
               | assignment
               | eol
               | export
+              | function
               | import
               | module
               | recipe
@@ -55,26 +56,43 @@ item          : alias
 eol           : NEWLINE
               | COMMENT NEWLINE
 
-alias         : 'alias' NAME ':=' NAME eol
+alias         : 'alias' NAME ':=' target eol
+
+target        : NAME ('::' NAME)*
 
 assignment    : NAME ':=' expression eol
 
 export        : 'export' assignment
 
+function      : NAME '(' parameters? ')' ':=' expression
+
+parameters    : NAME ( ',' NAME )* ','?
+
 set           : 'set' setting eol
 
 setting       : 'allow-duplicate-recipes' boolean?
               | 'allow-duplicate-variables' boolean?
+              | 'default-list' boolean?
+              | 'default-script' boolean?
+              | 'dotenv-command' ':=' string
               | 'dotenv-filename' ':=' string
               | 'dotenv-load' boolean?
+              | 'dotenv-override' boolean?
               | 'dotenv-path' ':=' string
               | 'dotenv-required' boolean?
               | 'export' boolean?
               | 'fallback' boolean?
+              | 'guards' boolean?
               | 'ignore-comments' boolean?
+              | 'indentation' ':=' string
+              | 'lazy' boolean?
+              | 'lists' boolean?
+              | 'minimum-version' ':=' string
+              | 'no-cd' boolean?
+              | 'no-exit-message' boolean?
               | 'positional-arguments' boolean?
-              | 'script-interpreter' ':=' string_list
               | 'quiet' boolean?
+              | 'script-interpreter' ':=' string_list
               | 'shell' ':=' string_list
               | 'tempdir' ':=' string
               | 'unstable' boolean?
@@ -93,26 +111,33 @@ module        : 'mod' '?'? NAME string? eol
 expression    : disjunct || expression
               | disjunct
 
-disjunct      : conjunct && disjunct
+disjunct      : comparison && disjunct
+              | comparison
+
+comparison    : conjunct '==' conjunct
+              | conjunct '!=' conjunct
+              | conjunct '=~' conjunct
+              | conjunct '!~' conjunct
               | conjunct
 
-conjunct      : 'if' condition '{' expression '}' 'else' '{' expression '}'
-              | 'assert' '(' condition ',' expression ')'
+conjunct      : 'if' expression '{' expression '}' ('else' '{' expression '}')?
+              | 'assert' '(' expression ',' expression ')'
               | '/' expression
-              | value '/' expression
               | value '+' expression
+              | value '++' expression
+              | value '/' expression
               | value
 
-condition     : expression '==' expression
-              | expression '!=' expression
-              | expression '=~' expression
-
-value         : NAME '(' sequence? ')'
+value         : '!' value
+              | NAME '(' sequence? ')'
               | BACKTICK
               | INDENTED_BACKTICK
               | NAME
+              | list
               | string
               | '(' expression ')'
+
+list          : '[' (expression (',' expression)* ','?)? ']'
 
 string        : 'x'? STRING
               | 'x'? INDENTED_STRING
@@ -138,8 +163,11 @@ variadic      : '*' parameter
 
 dependencies  : dependency* ('&&' dependency+)?
 
-dependency    : NAME
-              | '(' NAME expression* ')'
+dependency    : target
+              | '*'? '(' target argument* ')'
+
+argument      : '*' value
+              | expression
 
 body          : INDENT line+ DEDENT
 

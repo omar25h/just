@@ -7,19 +7,30 @@ pub(crate) enum Keyword {
   AllowDuplicateRecipes,
   AllowDuplicateVariables,
   Assert,
+  DefaultList,
+  DefaultScript,
+  DotenvCommand,
   DotenvFilename,
   DotenvLoad,
   DotenvOverride,
   DotenvPath,
   DotenvRequired,
+  Eager,
   Else,
   Export,
+  F,
   Fallback,
   False,
+  Guards,
   If,
   IgnoreComments,
   Import,
+  Indentation,
+  Lazy,
+  Lists,
+  MinimumVersion,
   Mod,
+  NoCd,
   NoExitMessage,
   PositionalArguments,
   Quiet,
@@ -37,7 +48,7 @@ pub(crate) enum Keyword {
 }
 
 impl Keyword {
-  pub(crate) fn from_lexeme(lexeme: &str) -> Option<Keyword> {
+  pub(crate) fn from_lexeme(lexeme: &str) -> Option<Self> {
     lexeme.parse().ok()
   }
 

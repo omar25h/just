@@ -14,7 +14,7 @@ _y:
 ",
     )
     .stdout("a b c d\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -23,13 +23,13 @@ fn summary_sorted() {
     .arg("--summary")
     .justfile(
       "
-b:
-c:
-a:
-",
+        b:
+        c:
+        a:
+      ",
     )
     .stdout("a b c\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -39,13 +39,13 @@ fn summary_unsorted() {
     .arg("--unsorted")
     .justfile(
       "
-b:
-c:
-a:
-",
+        b:
+        c:
+        a:
+      ",
     )
     .stdout("b c a\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -55,24 +55,43 @@ fn summary_none() {
     .arg("--quiet")
     .justfile("")
     .stdout("\n\n\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn no_recipes() {
   Test::new()
+    .justfile("")
     .arg("--summary")
-    .stderr("Justfile contains no recipes.\n")
+    .stderr("justfile contains no recipes\n")
     .stdout("\n\n\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn submodule_recipes() {
   Test::new()
-    .write("foo.just", "mod bar\nfoo:")
-    .write("bar.just", "mod baz\nbar:")
-    .write("baz.just", "mod biz\nbaz:")
+    .write(
+      "foo.just",
+      "
+        mod bar
+        foo:
+      ",
+    )
+    .write(
+      "bar.just",
+      "
+        mod baz
+        bar:
+      ",
+    )
+    .write(
+      "baz.just",
+      "
+        mod biz
+        baz:
+      ",
+    )
     .write("biz.just", "biz:")
     .justfile(
       "
@@ -83,7 +102,7 @@ fn submodule_recipes() {
     )
     .arg("--summary")
     .stdout("bar foo::foo foo::bar::bar foo::bar::baz::baz foo::bar::baz::biz::biz\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -97,5 +116,21 @@ fn summary_implies_unstable() {
     )
     .arg("--summary")
     .stdout("foo::foo\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn depth_first_pre_order() {
+  Test::new()
+    .write("bar.just", "bar:")
+    .write("foo.just", "foo:")
+    .justfile(
+      "
+        mod bar
+        mod foo
+      ",
+    )
+    .arg("--summary")
+    .stdout("bar::bar foo::foo\n")
+    .success();
 }

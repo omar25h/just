@@ -2,84 +2,105 @@ use super::*;
 
 #[test]
 fn cache_directory() {
-  Test::new()
-    .justfile("x := cache_directory()")
-    .args(["--evaluate", "x"])
-    .stdout(dirs::cache_dir().unwrap_or_default().to_string_lossy())
-    .run();
+  assert_eval(
+    "cache_directory()",
+    dirs::cache_dir().unwrap_or_default().to_str().unwrap(),
+  );
 }
 
 #[test]
 fn config_directory() {
-  Test::new()
-    .justfile("x := config_directory()")
-    .args(["--evaluate", "x"])
-    .stdout(dirs::config_dir().unwrap_or_default().to_string_lossy())
-    .run();
+  assert_eval(
+    "config_directory()",
+    dirs::config_dir().unwrap_or_default().to_str().unwrap(),
+  );
 }
 
 #[test]
 fn config_local_directory() {
-  Test::new()
-    .justfile("x := config_local_directory()")
-    .args(["--evaluate", "x"])
-    .stdout(
-      dirs::config_local_dir()
-        .unwrap_or_default()
-        .to_string_lossy(),
-    )
-    .run();
+  assert_eval(
+    "config_local_directory()",
+    dirs::config_local_dir()
+      .unwrap_or_default()
+      .to_str()
+      .unwrap(),
+  );
 }
 
 #[test]
 fn data_directory() {
-  Test::new()
-    .justfile("x := data_directory()")
-    .args(["--evaluate", "x"])
-    .stdout(dirs::data_dir().unwrap_or_default().to_string_lossy())
-    .run();
+  assert_eval(
+    "data_directory()",
+    dirs::data_dir().unwrap_or_default().to_str().unwrap(),
+  );
 }
 
 #[test]
 fn data_local_directory() {
-  Test::new()
-    .justfile("x := data_local_directory()")
-    .args(["--evaluate", "x"])
-    .stdout(dirs::data_local_dir().unwrap_or_default().to_string_lossy())
-    .run();
+  assert_eval(
+    "data_local_directory()",
+    dirs::data_local_dir().unwrap_or_default().to_str().unwrap(),
+  );
 }
 
 #[test]
 fn executable_directory() {
   if let Some(executable_dir) = dirs::executable_dir() {
-    Test::new()
-      .justfile("x := executable_directory()")
-      .args(["--evaluate", "x"])
-      .stdout(executable_dir.to_string_lossy())
-      .run();
+    assert_eval("executable_directory()", executable_dir.to_str().unwrap());
   } else {
     Test::new()
       .justfile("x := executable_directory()")
       .args(["--evaluate", "x"])
       .stderr(
         "
-          error: Call to function `executable_directory` failed: executable directory not found
+          error: call to function `executable_directory` failed: executable directory not found
            ——▶ justfile:1:6
             │
           1 │ x := executable_directory()
             │      ^^^^^^^^^^^^^^^^^^^^
         ",
       )
-      .status(EXIT_FAILURE)
-      .run();
+      .failure();
   }
 }
 
 #[test]
 fn home_directory() {
+  assert_eval(
+    "home_directory()",
+    dirs::home_dir().unwrap_or_default().to_str().unwrap(),
+  );
+}
+
+#[test]
+fn runtime_directory() {
+  if cfg!(not(target_os = "linux")) {
+    return;
+  }
+
+  assert_eval(
+    "runtime_directory()",
+    dirs::runtime_dir().unwrap_or_default().to_str().unwrap(),
+  );
+}
+
+#[test]
+fn runtime_directory_not_found() {
+  if cfg!(target_os = "linux") {
+    return;
+  }
+
   Test::new()
-    .justfile("x := home_directory()")
+    .justfile("x := runtime_directory()")
     .args(["--evaluate", "x"])
-    .stdout(dirs::home_dir().unwrap_or_default().to_string_lossy())
-    .run();
+    .stderr(
+      "
+        error: call to function `runtime_directory` failed: runtime directory not found
+         ——▶ justfile:1:6
+          │
+        1 │ x := runtime_directory()
+          │      ^^^^^^^^^^^^^^^^^
+      ",
+    )
+    .failure();
 }

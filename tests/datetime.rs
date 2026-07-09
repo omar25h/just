@@ -10,7 +10,7 @@ fn datetime() {
     )
     .args(["--eval", "x"])
     .stdout_regex(r"\d\d\d\d-\d\d-\d\d [+-]\d\d\d\d")
-    .run();
+    .success();
 }
 
 #[test]
@@ -23,5 +23,38 @@ fn datetime_utc() {
     )
     .args(["--eval", "x"])
     .stdout_regex(r"\d\d\d\d-\d\d-\d\d UTC")
-    .run();
+    .success();
+}
+
+#[test]
+fn invalid_format_string_error() {
+  Test::new()
+    .justfile("x := datetime('%!')")
+    .args(["--evaluate", "x"])
+    .stderr(
+      "
+        error: call to function `datetime` failed: failed to parse time format string `%!`: bad or unsupported format string
+         ——▶ justfile:1:6
+          │
+        1 │ x := datetime('%!')
+          │      ^^^^^^^^
+      ")
+    .failure();
+}
+
+#[test]
+fn parse_only_specifier_error() {
+  Test::new()
+    .justfile("x := datetime('%#z')")
+    .arg("--evaluate")
+    .stderr(
+      "
+        error: call to function `datetime` failed: failed to format time with format string `%#z`
+         ——▶ justfile:1:6
+          │
+        1 │ x := datetime('%#z')
+          │      ^^^^^^^^
+      ",
+    )
+    .failure();
 }

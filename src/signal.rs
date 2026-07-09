@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(i32)]
 pub(crate) enum Signal {
   Hangup = 1,
@@ -20,8 +20,8 @@ pub(crate) enum Signal {
 
 impl Signal {
   #[cfg(not(windows))]
-  pub(crate) const ALL: &'static [Signal] = &[
-    Signal::Hangup,
+  pub(crate) const ALL: &'static [Self] = &[
+    Self::Hangup,
     #[cfg(any(
       target_os = "dragonfly",
       target_os = "freebsd",
@@ -30,14 +30,23 @@ impl Signal {
       target_os = "netbsd",
       target_os = "openbsd",
     ))]
-    Signal::Info,
-    Signal::Interrupt,
-    Signal::Quit,
-    Signal::Terminate,
+    Self::Info,
+    Self::Interrupt,
+    Self::Quit,
+    Self::Terminate,
   ];
 
   pub(crate) fn code(self) -> i32 {
     128i32.checked_add(self.number()).unwrap()
+  }
+
+  pub(crate) fn from_name(name: &str) -> Option<Self> {
+    match name {
+      "SIGHUP" => Some(Self::Hangup),
+      "SIGINT" => Some(Self::Interrupt),
+      "SIGQUIT" => Some(Self::Quit),
+      _ => None,
+    }
   }
 
   pub(crate) fn is_fatal(self) -> bool {
@@ -60,13 +69,22 @@ impl Signal {
   }
 }
 
+impl Serialize for Signal {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    serializer.collect_str(self)
+  }
+}
+
 impl Display for Signal {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
     write!(
       f,
       "{}",
       match self {
-        Signal::Hangup => "SIGHUP",
+        Self::Hangup => "SIGHUP",
         #[cfg(any(
           target_os = "dragonfly",
           target_os = "freebsd",
@@ -75,10 +93,10 @@ impl Display for Signal {
           target_os = "netbsd",
           target_os = "openbsd",
         ))]
-        Signal::Info => "SIGINFO",
-        Signal::Interrupt => "SIGINT",
-        Signal::Quit => "SIGQUIT",
-        Signal::Terminate => "SIGTERM",
+        Self::Info => "SIGINFO",
+        Self::Interrupt => "SIGINT",
+        Self::Quit => "SIGQUIT",
+        Self::Terminate => "SIGTERM",
       }
     )
   }
@@ -108,9 +126,9 @@ impl From<Signal> for nix::sys::signal::Signal {
 impl TryFrom<u8> for Signal {
   type Error = io::Error;
 
-  fn try_from(n: u8) -> Result<Signal, Self::Error> {
+  fn try_from(n: u8) -> Result<Self, Self::Error> {
     match n {
-      1 => Ok(Signal::Hangup),
+      1 => Ok(Self::Hangup),
       #[cfg(any(
         target_os = "dragonfly",
         target_os = "freebsd",
@@ -119,10 +137,10 @@ impl TryFrom<u8> for Signal {
         target_os = "netbsd",
         target_os = "openbsd",
       ))]
-      29 => Ok(Signal::Info),
-      2 => Ok(Signal::Interrupt),
-      3 => Ok(Signal::Quit),
-      15 => Ok(Signal::Terminate),
+      29 => Ok(Self::Info),
+      2 => Ok(Self::Interrupt),
+      3 => Ok(Self::Quit),
+      15 => Ok(Self::Terminate),
       _ => Err(io::Error::other(format!("unexpected signal: {n}"))),
     }
   }

@@ -1,32 +1,31 @@
 use super::*;
 
-const JUSTFILE: &str = r#"
+const JUSTFILE: &str = "
 foo := `cat data`
 
-linewise bar=`cat data`: shebang
+shell bar=`cat data`: shebang
   echo expression: {{foo}}
   echo default: {{bar}}
-  echo linewise: `cat data`
+  echo shell: `cat data`
 
 shebang:
   #!/usr/bin/env sh
-  echo "shebang:" `cat data`
-"#;
+  echo 'shebang:' `cat data`
+";
 
 const DATA: &str = "OK";
 
-const WANT: &str = "shebang: OK\nexpression: OK\ndefault: OK\nlinewise: OK\n";
+const WANT: &str = "shebang: OK\nexpression: OK\ndefault: OK\nshell: OK\n";
 
 /// Test that just runs with the correct working directory when invoked with
 /// `--justfile` but not `--working-directory`
 #[test]
 fn justfile_without_working_directory() -> Result<(), Box<dyn Error>> {
-  let tmp = temptree! {
-    justfile: JUSTFILE,
-    data: DATA,
-  };
+  let tmp = tempdir();
+  fs::write(tmp.path().join("justfile"), JUSTFILE).unwrap();
+  fs::write(tmp.path().join("data"), DATA).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .arg("--justfile")
     .arg(tmp.path().join("justfile"))
     .output()?;
@@ -47,12 +46,11 @@ fn justfile_without_working_directory() -> Result<(), Box<dyn Error>> {
 /// `--justfile` but not `--working-directory`, and justfile path has no parent
 #[test]
 fn justfile_without_working_directory_relative() -> Result<(), Box<dyn Error>> {
-  let tmp = temptree! {
-    justfile: JUSTFILE,
-    data: DATA,
-  };
+  let tmp = tempdir();
+  fs::write(tmp.path().join("justfile"), JUSTFILE).unwrap();
+  fs::write(tmp.path().join("data"), DATA).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("--justfile")
     .arg("justfile")
@@ -74,13 +72,12 @@ fn justfile_without_working_directory_relative() -> Result<(), Box<dyn Error>> {
 /// found
 #[test]
 fn change_working_directory_to_search_justfile_parent() -> Result<(), Box<dyn Error>> {
-  let tmp = temptree! {
-    justfile: JUSTFILE,
-    data: DATA,
-    subdir: {},
-  };
+  let tmp = tempdir();
+  fs::write(tmp.path().join("justfile"), JUSTFILE).unwrap();
+  fs::write(tmp.path().join("data"), DATA).unwrap();
+  fs::create_dir(tmp.path().join("subdir")).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path().join("subdir"))
     .output()?;
 
@@ -100,14 +97,12 @@ fn change_working_directory_to_search_justfile_parent() -> Result<(), Box<dyn Er
 /// `--justfile` but not `--working-directory`
 #[test]
 fn justfile_and_working_directory() -> Result<(), Box<dyn Error>> {
-  let tmp = temptree! {
-    justfile: JUSTFILE,
-    sub: {
-      data: DATA,
-    },
-  };
+  let tmp = tempdir();
+  fs::write(tmp.path().join("justfile"), JUSTFILE).unwrap();
+  fs::create_dir(tmp.path().join("sub")).unwrap();
+  fs::write(tmp.path().join("sub/data"), DATA).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .arg("--justfile")
     .arg(tmp.path().join("justfile"))
     .arg("--working-directory")
@@ -130,14 +125,12 @@ fn justfile_and_working_directory() -> Result<(), Box<dyn Error>> {
 /// `--justfile` but not `--working-directory`
 #[test]
 fn search_dir_child() -> Result<(), Box<dyn Error>> {
-  let tmp = temptree! {
-    child: {
-      justfile: JUSTFILE,
-      data: DATA,
-    },
-  };
+  let tmp = tempdir();
+  fs::create_dir(tmp.path().join("child")).unwrap();
+  fs::write(tmp.path().join("child/justfile"), JUSTFILE).unwrap();
+  fs::write(tmp.path().join("child/data"), DATA).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path())
     .arg("child/")
     .output()?;
@@ -158,14 +151,12 @@ fn search_dir_child() -> Result<(), Box<dyn Error>> {
 /// `--justfile` but not `--working-directory`
 #[test]
 fn search_dir_parent() -> Result<(), Box<dyn Error>> {
-  let tmp = temptree! {
-    child: {
-    },
-    justfile: JUSTFILE,
-    data: DATA,
-  };
+  let tmp = tempdir();
+  fs::create_dir(tmp.path().join("child")).unwrap();
+  fs::write(tmp.path().join("justfile"), JUSTFILE).unwrap();
+  fs::write(tmp.path().join("data"), DATA).unwrap();
 
-  let output = Command::new(executable_path("just"))
+  let output = Command::new(JUST)
     .current_dir(tmp.path().join("child"))
     .arg("../")
     .output()?;
@@ -187,21 +178,19 @@ fn setting() {
   Test::new()
     .justfile(
       r#"
-      set working-directory := 'bar'
+        set working-directory := 'bar'
 
-      print1:
-        echo "$(basename "$PWD")"
+        print1:
+          echo "$(basename "$PWD")"
 
-      [no-cd]
-      print2:
-        echo "$(basename "$PWD")"
-    "#,
+        [no-cd]
+        print2:
+          echo "$(basename "$PWD")"
+      "#,
     )
     .current_dir("foo")
-    .tree(tree! {
-      foo: {},
-      bar: {}
-    })
+    .create_dir("foo")
+    .create_dir("bar")
     .args(["print1", "print2"])
     .stderr(
       r#"echo "$(basename "$PWD")"
@@ -209,7 +198,7 @@ echo "$(basename "$PWD")"
 "#,
     )
     .stdout("bar\nfoo\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -217,22 +206,39 @@ fn no_cd_overrides_setting() {
   Test::new()
     .justfile(
       "
-      set working-directory := 'bar'
+        set working-directory := 'bar'
 
-      [no-cd]
-      foo:
-        cat bar
-    ",
+        [no-cd]
+        foo:
+          cat bar
+      ",
     )
     .current_dir("foo")
-    .tree(tree! {
-      foo: {
-        bar: "hello",
-      }
-    })
+    .write("foo/bar", "hello")
     .stderr("cat bar\n")
     .stdout("hello")
-    .run();
+    .success();
+}
+
+#[test]
+fn working_directory_setting_conflicts_with_no_cd_setting() {
+  Test::new()
+    .justfile(
+      "
+      set working-directory := 'bar'
+      set no-cd := true
+    ",
+    )
+    .stderr(
+      "
+        error: `working-directory` set on line 1 is incompatible with `no-cd`
+         ——▶ justfile:2:5
+          │
+        2 │ set no-cd := true
+          │     ^^^^^
+      ",
+    )
+    .failure();
 }
 
 #[test]
@@ -251,7 +257,7 @@ set working-directory := 'bar'
     .write("foo/bar/file.txt", "FILE")
     .arg("foo")
     .stdout("FILE")
-    .run();
+    .success();
 }
 
 #[test]
@@ -269,7 +275,7 @@ fn working_dir_applies_to_backticks() {
     )
     .write("foo/file.txt", "FILE")
     .stdout("FILE\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -287,7 +293,7 @@ fn working_dir_applies_to_shell_function() {
     )
     .write("foo/file.txt", "FILE")
     .stdout("FILE\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -308,7 +314,7 @@ file := `cat file.txt`
     .arg("foo")
     .write("foo/bar/file.txt", "FILE")
     .stdout("FILE\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -329,7 +335,7 @@ file := shell('cat file.txt')
     .arg("foo")
     .write("foo/bar/file.txt", "FILE")
     .stdout("FILE\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -343,15 +349,14 @@ fn attribute_duplicate() {
       ",
     )
     .stderr(
-      "error: Recipe attribute `working-directory` first used on line 1 is duplicated on line 2
+      "error: recipe attribute `working-directory` first used on line 1 is duplicated on line 2
  ——▶ justfile:2:2
   │
 2 │ [working-directory('baz')]
   │  ^^^^^^^^^^^^^^^^^
 ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -366,7 +371,7 @@ fn attribute() {
     )
     .create_dir("foo")
     .expect_file("foo/bar", "baz\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -381,15 +386,14 @@ fn attribute_with_nocd_is_forbidden() {
     )
     .stderr(
       "
-        error: Recipe `bar` has both `[no-cd]` and `[working-directory]` attributes
+        error: recipe `bar` has both `[no-cd]` and `[working-directory]` attributes
          ——▶ justfile:3:1
           │
         3 │ bar:
           │ ^^^
       ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -406,5 +410,99 @@ fn setting_and_attribute() {
     )
     .create_dir("foo/bar")
     .expect_file("foo/bar/fred", "bob\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn attribute_with_expression() {
+  Test::new()
+    .justfile(
+      "
+        dir := 'foo'
+
+        [working-directory(dir + '-bar')]
+        @baz:
+          echo bob > fred
+      ",
+    )
+    .create_dir("foo-bar")
+    .expect_file("foo-bar/fred", "bob\n")
+    .success();
+}
+
+#[test]
+fn attribute_with_recipe_parameter() {
+  Test::new()
+    .justfile(
+      "
+        [working-directory(target)]
+        @baz target:
+          echo bob > fred
+      ",
+    )
+    .create_dir("foo")
+    .args(["baz", "foo"])
+    .expect_file("foo/fred", "bob\n")
+    .success();
+}
+
+#[test]
+fn attribute_with_backtick() {
+  Test::new()
+    .justfile(
+      "
+        [working-directory(`echo foo`)]
+        @baz:
+          echo bob > fred
+      ",
+    )
+    .create_dir("foo")
+    .expect_file("foo/fred", "bob\n")
+    .success();
+}
+
+#[test]
+fn attribute_with_expression_dump() {
+  Test::new()
+    .justfile(
+      "
+        dir := 'foo'
+
+        [working-directory(dir + '-bar')]
+        baz:
+          echo bob
+      ",
+    )
+    .arg("--dump")
+    .stdout(
+      "
+        dir := 'foo'
+
+        [working-directory(dir + '-bar')]
+        baz:
+            echo bob
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn attribute_undefined_variable() {
+  Test::new()
+    .justfile(
+      "
+        [working-directory(x)]
+        foo:
+      ",
+    )
+    .stderr(
+      "
+        error: variable `x` not defined
+         ——▶ justfile:1:20
+          │
+        1 │ [working-directory(x)]
+          │                    ^
+      ",
+    )
+    .failure();
 }

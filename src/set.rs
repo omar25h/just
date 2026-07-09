@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Set<'src> {
+  pub(crate) attributes: AttributeSet<'src>,
   pub(crate) name: Name<'src>,
   pub(crate) value: Setting<'src>,
 }
@@ -14,6 +15,10 @@ impl<'src> Keyed<'src> for Set<'src> {
 
 impl Display for Set<'_> {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-    write!(f, "set {} := {}", self.name, self.value)
+    if self.value.is_default() {
+      write!(f, "set {}", self.name)
+    } else {
+      write!(f, "set {} := {}", self.name, self.value)
+    }
   }
 }

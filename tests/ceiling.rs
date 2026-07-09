@@ -8,8 +8,11 @@ fn justfile_run_search_stops_at_ceiling_dir() {
 
   fs::create_dir(&ceiling).unwrap();
 
-  #[cfg(not(windows))]
-  let ceiling = ceiling.canonicalize().unwrap();
+  let ceiling = if cfg!(not(windows)) {
+    ceiling.canonicalize().unwrap()
+  } else {
+    ceiling
+  };
 
   Test::with_tempdir(tempdir)
     .justfile(
@@ -21,9 +24,8 @@ fn justfile_run_search_stops_at_ceiling_dir() {
     .create_dir("foo/bar")
     .current_dir("foo/bar")
     .args(["--ceiling", ceiling.to_str().unwrap()])
-    .stderr("error: No justfile found\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: no justfile found\n")
+    .failure();
 }
 
 #[test]
@@ -34,8 +36,11 @@ fn ceiling_can_be_passed_as_environment_variable() {
 
   fs::create_dir(&ceiling).unwrap();
 
-  #[cfg(not(windows))]
-  let ceiling = ceiling.canonicalize().unwrap();
+  let ceiling = if cfg!(not(windows)) {
+    ceiling.canonicalize().unwrap()
+  } else {
+    ceiling
+  };
 
   Test::with_tempdir(tempdir)
     .justfile(
@@ -47,9 +52,8 @@ fn ceiling_can_be_passed_as_environment_variable() {
     .create_dir("foo/bar")
     .current_dir("foo/bar")
     .env("JUST_CEILING", ceiling.to_str().unwrap())
-    .stderr("error: No justfile found\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: no justfile found\n")
+    .failure();
 }
 
 #[test]
@@ -60,22 +64,23 @@ fn justfile_init_search_stops_at_ceiling_dir() {
 
   fs::create_dir(&ceiling).unwrap();
 
-  #[cfg(not(windows))]
-  let ceiling = ceiling.canonicalize().unwrap();
+  let ceiling = if cfg!(not(windows)) {
+    ceiling.canonicalize().unwrap()
+  } else {
+    ceiling
+  };
 
   let Output { tempdir, .. } = Test::with_tempdir(tempdir)
-    .no_justfile()
-    .test_round_trip(false)
     .create_dir(".git")
     .create_dir("foo/bar")
     .current_dir("foo/bar")
     .args(["--init", "--ceiling", ceiling.to_str().unwrap()])
     .stderr_regex(if cfg!(windows) {
-      r"Wrote justfile to `.*\\foo\\bar\\justfile`\n"
+      r"wrote justfile to `.*\\foo\\bar\\justfile`\n"
     } else {
-      "Wrote justfile to `.*/foo/bar/justfile`\n"
+      "wrote justfile to `.*/foo/bar/justfile`\n"
     })
-    .run();
+    .success();
 
   assert_eq!(
     fs::read_to_string(tempdir.path().join("foo/bar/justfile")).unwrap(),

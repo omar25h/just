@@ -8,31 +8,48 @@ fn modules_are_stable() {
         mod foo
       ",
     )
-    .write("foo.just", "@bar:\n echo ok")
+    .write(
+      "foo.just",
+      "
+        @bar:
+         echo ok
+      ",
+    )
     .args(["foo", "bar"])
     .stdout("ok\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn default_recipe_in_submodule_must_have_no_arguments() {
   Test::new()
-    .write("foo.just", "foo bar:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo bar:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
       ",
     )
     .arg("foo")
-    .stderr("error: Recipe `foo` cannot be used as default recipe since it requires at least 1 argument.\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: recipe `foo` cannot be used as default recipe since it requires at least 1 argument\n")
+    .failure();
 }
 
 #[test]
 fn module_recipes_can_be_run_as_subcommands() {
   Test::new()
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -41,13 +58,19 @@ fn module_recipes_can_be_run_as_subcommands() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn module_recipes_can_be_run_with_path_syntax() {
   Test::new()
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -55,14 +78,20 @@ fn module_recipes_can_be_run_with_path_syntax() {
     )
     .arg("foo::foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn nested_module_recipes_can_be_run_with_path_syntax() {
   Test::new()
     .write("foo.just", "mod bar")
-    .write("bar.just", "baz:\n @echo BAZ")
+    .write(
+      "bar.just",
+      "
+        baz:
+         @echo BAZ
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -70,44 +99,51 @@ fn nested_module_recipes_can_be_run_with_path_syntax() {
     )
     .arg("foo::bar::baz")
     .stdout("BAZ\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn invalid_path_syntax() {
   Test::new()
+    .justfile("")
     .arg(":foo::foo")
-    .stderr("error: Justfile does not contain recipe `:foo::foo`\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: justfile does not contain recipe `:foo::foo`\n")
+    .failure();
 
   Test::new()
+    .justfile("")
     .arg("foo::foo:")
-    .stderr("error: Justfile does not contain recipe `foo::foo:`\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: justfile does not contain recipe `foo::foo:`\n")
+    .failure();
 
   Test::new()
+    .justfile("")
     .arg("foo:::foo")
-    .stderr("error: Justfile does not contain recipe `foo:::foo`\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: justfile does not contain recipe `foo:::foo`\n")
+    .failure();
 }
 
 #[test]
 fn missing_recipe_after_invalid_path() {
   Test::new()
+    .justfile("")
     .arg(":foo::foo")
     .arg("bar")
-    .stderr("error: Justfile does not contain recipe `:foo::foo`\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: justfile does not contain recipe `:foo::foo`\n")
+    .failure();
 }
 
 #[test]
 fn assignments_are_evaluated_in_modules() {
   Test::new()
-    .write("foo.just", "bar := 'CHILD'\nfoo:\n @echo {{bar}}")
+    .write(
+      "foo.just",
+      "
+        bar := 'CHILD'
+        foo:
+         @echo {{bar}}
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -117,13 +153,19 @@ fn assignments_are_evaluated_in_modules() {
     .arg("foo")
     .arg("foo")
     .stdout("CHILD\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn module_subcommand_runs_default_recipe() {
   Test::new()
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -131,13 +173,136 @@ fn module_subcommand_runs_default_recipe() {
     )
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn module_subcommand_lists_recipes_with_default_list() {
+  Test::new()
+    .write(
+      "foo.just",
+      "
+        set default-list := true
+
+        foo:
+          @echo FOO
+
+        bar:
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .arg("foo")
+    .stdout(
+      "
+        Available recipes:
+            bar
+            foo
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn root_default_list_does_not_affect_submodule_default_recipe() {
+  Test::new()
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
+    .justfile(
+      "
+        set default-list := true
+
+        mod foo
+      ",
+    )
+    .arg("foo")
+    .stdout("FOO\n")
+    .success();
+}
+
+#[test]
+fn nested_module_subcommand_lists_recipes_with_default_list() {
+  #[track_caller]
+  fn case(args: &[&str]) {
+    Test::new()
+      .write(
+        "foo.just", "mod bar
+",
+      )
+      .write(
+        "bar.just",
+        "
+          set default-list := true
+
+          baz:
+            @echo BAZ
+
+          qux:
+        ",
+      )
+      .justfile(
+        "
+          mod foo
+        ",
+      )
+      .args(args)
+      .stdout(
+        "
+          Available recipes:
+              baz
+              qux
+        ",
+      )
+      .success();
+  }
+
+  case(&["foo", "bar"]);
+  case(&["foo::bar"]);
+  case(&["foo::bar::"]);
+}
+
+#[test]
+fn module_default_list_does_not_override_explicit_recipe() {
+  Test::new()
+    .write(
+      "foo.just",
+      "
+        set default-list := true
+
+        bar:
+          @echo BAR
+
+        baz:
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .args(["foo", "bar"])
+    .stdout("BAR\n")
+    .success();
 }
 
 #[test]
 fn modules_can_contain_other_modules() {
   Test::new()
-    .write("bar.just", "baz:\n @echo BAZ")
+    .write(
+      "bar.just",
+      "
+        baz:
+         @echo BAZ
+      ",
+    )
     .write("foo.just", "mod bar")
     .justfile(
       "
@@ -148,7 +313,7 @@ fn modules_can_contain_other_modules() {
     .arg("bar")
     .arg("baz")
     .stdout("BAZ\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -165,10 +330,9 @@ fn circular_module_imports_are_detected() {
     .arg("bar")
     .arg("baz")
     .stderr_regex(path_for_regex(
-      "error: Import `.*/foo.just` in `.*/bar.just` is circular\n",
+      "error: import `.*/foo.just` in `.*/bar.just` is circular\n",
     ))
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -176,11 +340,12 @@ fn modules_use_module_settings() {
   Test::new()
     .write(
       "foo.just",
-      "set allow-duplicate-recipes
-foo:
-foo:
-  @echo FOO
-",
+      "
+        set allow-duplicate-recipes
+        foo:
+        foo:
+          @echo FOO
+      ",
     )
     .justfile(
       "
@@ -190,15 +355,16 @@ foo:
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 
   Test::new()
     .write(
       "foo.just",
-      "foo:
-foo:
-  @echo FOO
-",
+      "
+        foo:
+        foo:
+          @echo FOO
+      ",
     )
     .justfile(
       "
@@ -207,19 +373,41 @@ foo:
         set allow-duplicate-recipes
       ",
     )
-    .status(EXIT_FAILURE)
     .arg("foo")
     .arg("foo")
     .stderr(
       "
-      error: Recipe `foo` first defined on line 1 is redefined on line 2
-       ——▶ foo.just:2:1
-        │
-      2 │ foo:
-        │ ^^^
-    ",
+        error: recipe `foo` first defined on line 1 is redefined on line 2
+         ——▶ foo.just:2:1
+          │
+        2 │ foo:
+          │ ^^^
+      ",
     )
-    .run();
+    .failure();
+}
+
+#[test]
+fn submodules_do_not_inherit_no_cd_setting() {
+  Test::new()
+    .write(
+      "foo/mod.just",
+      "
+        bar:
+          @cat data.txt
+      ",
+    )
+    .write("foo/data.txt", "MODULE\n")
+    .justfile(
+      "
+        set no-cd := true
+
+        mod foo
+      ",
+    )
+    .args(["foo", "bar"])
+    .stdout("MODULE\n")
+    .success();
 }
 
 #[test]
@@ -234,15 +422,14 @@ fn modules_conflict_with_recipes() {
     )
     .stderr(
       "
-      error: Module `foo` defined on line 1 is redefined as a recipe on line 2
-       ——▶ justfile:2:1
-        │
-      2 │ foo:
-        │ ^^^
-    ",
+        error: module `foo` defined on line 1 is redefined as a recipe on line 2
+         ——▶ justfile:2:1
+          │
+        2 │ foo:
+          │ ^^^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -258,15 +445,14 @@ fn modules_conflict_with_aliases() {
     )
     .stderr(
       "
-      error: Module `foo` defined on line 1 is redefined as an alias on line 3
-       ——▶ justfile:3:7
-        │
-      3 │ alias foo := bar
-        │       ^^^
-    ",
+        error: module `foo` defined on line 1 is redefined as an alias on line 3
+         ——▶ justfile:3:7
+          │
+        3 │ alias foo := bar
+          │       ^^^
+      ",
     )
-    .status(EXIT_FAILURE)
-    .run();
+    .failure();
 }
 
 #[test]
@@ -281,23 +467,28 @@ fn modules_conflict_with_other_modules() {
         bar:
       ",
     )
-    .status(EXIT_FAILURE)
     .stderr(
       "
-      error: Module `foo` first defined on line 1 is redefined on line 2
-       ——▶ justfile:2:5
-        │
-      2 │ mod foo
-        │     ^^^
-    ",
+        error: module `foo` first defined on line 1 is redefined on line 2
+         ——▶ justfile:2:5
+          │
+        2 │ mod foo
+          │     ^^^
+      ",
     )
-    .run();
+    .failure();
 }
 
 #[test]
 fn modules_are_dumped_correctly() {
   Test::new()
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -305,13 +496,19 @@ fn modules_are_dumped_correctly() {
     )
     .arg("--dump")
     .stdout("mod foo\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn optional_modules_are_dumped_correctly() {
   Test::new()
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod? foo
@@ -319,13 +516,19 @@ fn optional_modules_are_dumped_correctly() {
     )
     .arg("--dump")
     .stdout("mod? foo\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_can_be_in_subdirectory() {
   Test::new()
-    .write("foo/mod.just", "foo:\n @echo FOO")
+    .write(
+      "foo/mod.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -334,13 +537,19 @@ fn modules_can_be_in_subdirectory() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_in_subdirectory_can_be_named_justfile() {
   Test::new()
-    .write("foo/justfile", "foo:\n @echo FOO")
+    .write(
+      "foo/justfile",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -349,13 +558,19 @@ fn modules_in_subdirectory_can_be_named_justfile() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_in_subdirectory_can_be_named_justfile_with_any_case() {
   Test::new()
-    .write("foo/JUSTFILE", "foo:\n @echo FOO")
+    .write(
+      "foo/JUSTFILE",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -364,13 +579,19 @@ fn modules_in_subdirectory_can_be_named_justfile_with_any_case() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_in_subdirectory_can_have_leading_dot() {
   Test::new()
-    .write("foo/.justfile", "foo:\n @echo FOO")
+    .write(
+      "foo/.justfile",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -379,31 +600,42 @@ fn modules_in_subdirectory_can_have_leading_dot() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_require_unambiguous_file() {
   Test::new()
-    .write("foo/justfile", "foo:\n @echo FOO")
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo/justfile",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo
       ",
     )
-    .status(EXIT_FAILURE)
     .stderr(
       "
-      error: Found multiple source files for module `foo`: `foo/justfile` and `foo.just`
-       ——▶ justfile:1:5
-        │
-      1 │ mod foo
-        │     ^^^
+        error: found multiple source files for module `foo`: `foo/justfile` and `foo.just`
+         ——▶ justfile:1:5
+          │
+        1 │ mod foo
+          │     ^^^
       "
       .replace('/', MAIN_SEPARATOR_STR),
     )
-    .run();
+    .failure();
 }
 
 #[test]
@@ -414,17 +646,16 @@ fn missing_module_file_error() {
         mod foo
       ",
     )
-    .status(EXIT_FAILURE)
     .stderr(
       "
-      error: Could not find source file for module `foo`.
-       ——▶ justfile:1:5
-        │
-      1 │ mod foo
-        │     ^^^
+        error: could not find source file for module `foo`
+         ——▶ justfile:1:5
+          │
+        1 │ mod foo
+          │     ^^^
       ",
     )
-    .run();
+    .failure();
 }
 
 #[test]
@@ -439,7 +670,7 @@ fn missing_optional_modules_do_not_trigger_error() {
       ",
     )
     .stdout("BAR\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -452,11 +683,331 @@ fn missing_optional_modules_do_not_conflict() {
         mod foo 'baz.just'
       ",
     )
-    .write("baz.just", "baz:\n @echo BAZ")
+    .write(
+      "baz.just",
+      "
+        baz:
+         @echo BAZ
+      ",
+    )
     .arg("foo")
     .arg("baz")
     .stdout("BAZ\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn recipe_depending_on_absent_optional_module_is_disabled() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        hello:
+          @echo HELLO
+      ",
+    )
+    .arg("build")
+    .stderr("error: recipe `build` depends on absent module `foo`\n")
+    .failure();
+}
+
+#[test]
+fn recipes_not_depending_on_absent_optional_module_still_run() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        hello:
+          @echo HELLO
+      ",
+    )
+    .arg("hello")
+    .stdout("HELLO\n")
+    .success();
+}
+
+#[test]
+fn disabled_recipes_are_hidden_from_list() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        hello:
+          @echo HELLO
+      ",
+    )
+    .arg("--list")
+    .stdout(
+      "
+        Available recipes:
+            hello
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn disabled_recipes_are_hidden_from_summary() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        hello:
+          @echo HELLO
+      ",
+    )
+    .arg("--summary")
+    .stdout("hello\n")
+    .success();
+}
+
+#[test]
+fn disabled_recipe_runs_once_module_is_present() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+      ",
+    )
+    .write(
+      "foo.just",
+      "
+        setup:
+         @echo SETUP
+      ",
+    )
+    .arg("build")
+    .stdout("SETUP\nBUILD\n")
+    .success();
+}
+
+#[test]
+fn recipe_disabled_by_multiple_modules() {
+  Test::new()
+    .justfile(
+      "
+        mod? bar
+        mod? foo
+
+        build: foo::setup bar::ship
+          @echo BUILD
+      ",
+    )
+    .arg("build")
+    .stderr("error: recipe `build` depends on absent modules `bar` and `foo`\n")
+    .failure();
+}
+
+#[test]
+fn disabling_is_transitive() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        deploy: build
+          @echo DEPLOY
+      ",
+    )
+    .arg("deploy")
+    .stderr("error: recipe `deploy` depends on absent module `foo`\n")
+    .failure();
+}
+
+#[test]
+fn nested_absent_optional_module_disables_dependent() {
+  Test::new()
+    .justfile(
+      "
+        mod a
+
+        x: a::b::c
+          @echo X
+      ",
+    )
+    .write(
+      "a/mod.just",
+      "
+        mod? b
+
+        ay:
+         @echo AY
+      ",
+    )
+    .arg("x")
+    .stderr("error: recipe `x` depends on absent module `a::b`\n")
+    .failure();
+}
+
+#[test]
+fn alias_to_disabled_recipe_is_disabled() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        alias b := build
+      ",
+    )
+    .arg("b")
+    .stderr("error: alias `b` depends on absent module `foo`\n")
+    .failure();
+}
+
+#[test]
+fn disabled_alias_is_hidden_from_list() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        alias b := build
+
+        hello:
+          @echo HELLO
+      ",
+    )
+    .arg("--list")
+    .stdout(
+      "
+        Available recipes:
+            hello
+      ",
+    )
+    .success();
+}
+
+#[test]
+fn disabled_alias_runs_once_module_is_present() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        build: foo::setup
+          @echo BUILD
+
+        alias b := build
+      ",
+    )
+    .write(
+      "foo.just",
+      "
+        setup:
+         @echo SETUP
+      ",
+    )
+    .arg("b")
+    .stdout("SETUP\nBUILD\n")
+    .success();
+}
+
+#[test]
+fn alias_disabled_by_multiple_modules() {
+  Test::new()
+    .justfile(
+      "
+        mod? bar
+        mod? foo
+
+        build: foo::setup bar::ship
+          @echo BUILD
+
+        alias b := build
+      ",
+    )
+    .arg("b")
+    .stderr("error: alias `b` depends on absent modules `bar` and `foo`\n")
+    .failure();
+}
+
+#[test]
+fn alias_to_recipe_in_absent_module_is_disabled() {
+  Test::new()
+    .justfile(
+      "
+        mod? foo
+
+        alias b := foo::build
+      ",
+    )
+    .arg("b")
+    .stderr("error: alias `b` depends on absent module `foo`\n")
+    .failure();
+}
+
+#[test]
+fn recipe_in_absent_optional_module_is_error() {
+  Test::new()
+    .justfile("mod? foo")
+    .arg("foo::bar")
+    .stderr("error: optional module `foo` is absent\n")
+    .failure();
+}
+
+#[test]
+fn recipe_in_nested_absent_optional_module_is_error() {
+  Test::new()
+    .justfile("mod a")
+    .write("a/mod.just", "mod? b")
+    .arg("a::b::c")
+    .stderr("error: optional module `a::b` is absent\n")
+    .failure();
+}
+
+#[test]
+fn show_recipe_in_absent_optional_module_is_error() {
+  Test::new()
+    .justfile("mod? foo")
+    .args(["--show", "foo::bar"])
+    .stderr("error: optional module `foo` is absent\n")
+    .failure();
+}
+
+#[test]
+fn list_absent_optional_module_is_error() {
+  Test::new()
+    .justfile("mod? foo")
+    .args(["--list", "foo"])
+    .stderr("error: optional module `foo` is absent\n")
+    .failure();
+}
+
+#[test]
+fn evaluate_absent_optional_module_is_error() {
+  Test::new()
+    .justfile("mod? foo")
+    .args(["--evaluate", "foo::bar"])
+    .stderr("error: optional module `foo` is absent\n")
+    .failure();
 }
 
 #[test]
@@ -469,15 +1020,21 @@ fn root_dotenv_is_available_to_submodules() {
         mod foo
       ",
     )
-    .write("foo.just", "foo:\n @echo $DOTENV_KEY")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo $DOTENV_KEY
+      ",
+    )
     .write(".env", "DOTENV_KEY=dotenv-value")
     .args(["foo", "foo"])
     .stdout("dotenv-value\n")
-    .run();
+    .success();
 }
 
 #[test]
-fn dotenv_settings_in_submodule_are_ignored() {
+fn submodule_inherits_root_dotenv_even_with_dotenv_load_false() {
   Test::new()
     .justfile(
       "
@@ -488,18 +1045,171 @@ fn dotenv_settings_in_submodule_are_ignored() {
     )
     .write(
       "foo.just",
-      "set dotenv-load := false\nfoo:\n @echo $DOTENV_KEY",
+      "
+        set dotenv-load := false
+        foo:
+         @echo $DOTENV_KEY
+      ",
     )
     .write(".env", "DOTENV_KEY=dotenv-value")
     .args(["foo", "foo"])
     .stdout("dotenv-value\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn submodule_loads_own_dotenv() {
+  Test::new()
+    .justfile(
+      "
+        set dotenv-load
+
+        mod foo
+      ",
+    )
+    .write(
+      "foo/mod.just",
+      "
+        set dotenv-load
+        foo:
+         @echo $ROOT_KEY $SUB_KEY
+      ",
+    )
+    .write(".env", "ROOT_KEY=root")
+    .write("foo/.env", "SUB_KEY=sub")
+    .args(["foo", "foo"])
+    .stdout("root sub\n")
+    .success();
+}
+
+#[test]
+fn submodule_dotenv_overrides_root() {
+  Test::new()
+    .justfile(
+      "
+        set dotenv-load
+
+        mod foo
+      ",
+    )
+    .write(
+      "foo/mod.just",
+      "
+        set dotenv-load
+        foo:
+         @echo $KEY
+      ",
+    )
+    .write(".env", "KEY=root")
+    .write("foo/.env", "KEY=sub")
+    .args(["foo", "foo"])
+    .stdout("sub\n")
+    .success();
+}
+
+#[test]
+fn root_does_not_see_submodule_dotenv() {
+  Test::new()
+    .justfile(
+      "
+        set dotenv-load
+
+        mod foo
+
+        bar:
+          @echo ${SUB_KEY:-unset}
+      ",
+    )
+    .write(
+      "foo/mod.just",
+      "
+        set dotenv-load
+        foo:
+         @echo $SUB_KEY
+      ",
+    )
+    .write(".env", "ROOT_KEY=root")
+    .write("foo/.env", "SUB_KEY=sub")
+    .args(["bar"])
+    .stdout("unset\n")
+    .success();
+}
+
+#[test]
+fn nested_submodule_dotenv_merge() {
+  Test::new()
+    .justfile(
+      "
+        set dotenv-load
+
+        mod foo
+      ",
+    )
+    .write(
+      "foo/mod.just",
+      "
+        set dotenv-load
+        mod bar
+      ",
+    )
+    .write(
+      "foo/bar/mod.just",
+      "
+        set dotenv-load
+        baz:
+         @echo $A $B $C
+      ",
+    )
+    .write(
+      ".env",
+      "
+        A=1
+        B=2
+        C=3
+      ",
+    )
+    .write("foo/.env", "B=20")
+    .write("foo/bar/.env", "C=300")
+    .args(["foo", "bar", "baz"])
+    .stdout("1 20 300\n")
+    .success();
+}
+
+#[test]
+fn submodule_dotenv_load_false_skips_own_but_inherits_parent() {
+  Test::new()
+    .justfile(
+      "
+        set dotenv-load
+
+        mod foo
+      ",
+    )
+    .write(
+      "foo/mod.just",
+      "
+        set dotenv-load := false
+        foo:
+         @echo $ROOT_KEY ${SUB_KEY:-unset}
+      ",
+    )
+    .write(".env", "ROOT_KEY=root")
+    .write("foo/.env", "SUB_KEY=sub")
+    .args(["foo", "foo"])
+    .stdout("root unset\n")
+    .success();
 }
 
 #[test]
 fn modules_may_specify_path() {
   Test::new()
-    .write("commands/foo.just", "foo:\n @echo FOO")
+    .write(
+      "commands/foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo 'commands/foo.just'
@@ -508,13 +1218,19 @@ fn modules_may_specify_path() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_may_specify_path_to_directory() {
   Test::new()
-    .write("commands/bar/mod.just", "foo:\n @echo FOO")
+    .write(
+      "commands/bar/mod.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo 'commands/bar'
@@ -523,13 +1239,19 @@ fn modules_may_specify_path_to_directory() {
     .arg("foo")
     .arg("foo")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn modules_with_paths_are_dumped_correctly() {
   Test::new()
-    .write("commands/foo.just", "foo:\n @echo FOO")
+    .write(
+      "commands/foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo 'commands/foo.just'
@@ -537,13 +1259,19 @@ fn modules_with_paths_are_dumped_correctly() {
     )
     .arg("--dump")
     .stdout("mod foo 'commands/foo.just'\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn optional_modules_with_paths_are_dumped_correctly() {
   Test::new()
-    .write("commands/foo.just", "foo:\n @echo FOO")
+    .write(
+      "commands/foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod? foo 'commands/foo.just'
@@ -551,7 +1279,7 @@ fn optional_modules_with_paths_are_dumped_correctly() {
     )
     .arg("--dump")
     .stdout("mod? foo 'commands/foo.just'\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -566,14 +1294,20 @@ fn recipes_may_be_named_mod() {
     .arg("mod")
     .arg("bar")
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
-fn submodule_linewise_recipes_run_in_submodule_directory() {
+fn submodule_shell_recipes_run_in_submodule_directory() {
   Test::new()
     .write("foo/bar", "BAR")
-    .write("foo/mod.just", "foo:\n @cat bar")
+    .write(
+      "foo/mod.just",
+      "
+        foo:
+         @cat bar
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -582,14 +1316,21 @@ fn submodule_linewise_recipes_run_in_submodule_directory() {
     .arg("foo")
     .arg("foo")
     .stdout("BAR")
-    .run();
+    .success();
 }
 
 #[test]
 fn submodule_shebang_recipes_run_in_submodule_directory() {
   Test::new()
     .write("foo/bar", "BAR")
-    .write("foo/mod.just", "foo:\n #!/bin/sh\n cat bar")
+    .write(
+      "foo/mod.just",
+      "
+        foo:
+         #!/bin/sh
+         cat bar
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -598,14 +1339,20 @@ fn submodule_shebang_recipes_run_in_submodule_directory() {
     .arg("foo")
     .arg("foo")
     .stdout("BAR")
-    .run();
+    .success();
 }
 
 #[test]
 fn cross_module_dependency_runs_in_submodule_directory() {
   Test::new()
     .write("foo/bar", "BAR")
-    .write("foo/mod.just", "foo:\n @cat bar")
+    .write(
+      "foo/mod.just",
+      "
+        foo:
+         @cat bar
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -615,7 +1362,7 @@ fn cross_module_dependency_runs_in_submodule_directory() {
     )
     .arg("main")
     .stdout("BAR")
-    .run();
+    .success();
 }
 
 #[test]
@@ -625,9 +1372,9 @@ fn cross_module_dependency_with_no_cd_runs_in_invocation_directory() {
     .write(
       "foo/mod.just",
       "
-[no-cd]
-foo:
-  @cat root_file
+        [no-cd]
+        foo:
+          @cat root_file
       ",
     )
     .justfile(
@@ -639,14 +1386,20 @@ foo:
     )
     .arg("main")
     .stdout("ROOT")
-    .run();
+    .success();
 }
 
 #[test]
 fn nested_cross_module_dependency_runs_in_correct_directory() {
   Test::new()
     .write("outer/inner/file", "NESTED")
-    .write("outer/inner/mod.just", "task:\n @cat file")
+    .write(
+      "outer/inner/mod.just",
+      "
+        task:
+         @cat file
+      ",
+    )
     .write("outer/mod.just", "mod inner")
     .justfile(
       "
@@ -657,14 +1410,22 @@ fn nested_cross_module_dependency_runs_in_correct_directory() {
     )
     .arg("main")
     .stdout("NESTED")
-    .run();
+    .success();
 }
 
-#[cfg(not(windows))]
 #[test]
-fn module_paths_beginning_with_tilde_are_expanded_to_homdir() {
+fn modulepaths_beginning_with_tilde_are_expanded_to_homdir() {
+  if cfg!(windows) {
+    return;
+  }
   Test::new()
-    .write("foobar/mod.just", "foo:\n @echo FOOBAR")
+    .write(
+      "foobar/mod.just",
+      "
+        foo:
+         @echo FOOBAR
+      ",
+    )
     .justfile(
       "
         mod foo '~/mod.just'
@@ -674,13 +1435,19 @@ fn module_paths_beginning_with_tilde_are_expanded_to_homdir() {
     .arg("foo")
     .stdout("FOOBAR\n")
     .env("HOME", "foobar")
-    .run();
+    .success();
 }
 
 #[test]
 fn recipes_with_same_name_are_both_run() {
   Test::new()
-    .write("foo.just", "bar:\n @echo MODULE")
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo MODULE
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -692,46 +1459,56 @@ fn recipes_with_same_name_are_both_run() {
     .arg("foo::bar")
     .arg("bar")
     .stdout("MODULE\nROOT\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn submodule_recipe_not_found_error_message() {
   Test::new()
+    .justfile("")
     .args(["foo::bar"])
-    .stderr("error: Justfile does not contain submodule `foo`\n")
-    .status(1)
-    .run();
+    .stderr("error: justfile does not contain submodule `foo`\n")
+    .failure();
 }
 
 #[test]
 fn submodule_recipe_not_found_spaced_error_message() {
   Test::new()
-    .write("foo.just", "bar:\n @echo MODULE")
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo MODULE
+      ",
+    )
     .justfile(
       "
         mod foo
       ",
     )
     .args(["foo", "baz"])
-    .stderr("error: Justfile does not contain recipe `foo baz`\nDid you mean `bar`?\n")
-    .status(1)
-    .run();
+    .stderr("error: justfile does not contain recipe `foo baz`\nDid you mean `bar`?\n")
+    .failure();
 }
 
 #[test]
 fn submodule_recipe_not_found_colon_separated_error_message() {
   Test::new()
-    .write("foo.just", "bar:\n @echo MODULE")
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo MODULE
+      ",
+    )
     .justfile(
       "
         mod foo
       ",
     )
     .args(["foo::baz"])
-    .stderr("error: Justfile does not contain recipe `foo::baz`\nDid you mean `bar`?\n")
-    .status(1)
-    .run();
+    .stderr("error: justfile does not contain recipe `foo::baz`\nDid you mean `bar`?\n")
+    .failure();
 }
 
 #[test]
@@ -747,9 +1524,8 @@ fn colon_separated_path_does_not_run_recipes() {
       ",
     )
     .args(["foo::bar"])
-    .stderr("error: Expected submodule at `foo` but found recipe.\n")
-    .status(1)
-    .run();
+    .stderr("error: expected submodule at `foo` but found recipe\n")
+    .failure();
 }
 
 #[test]
@@ -757,9 +1533,8 @@ fn expected_submodule_but_found_recipe_in_root_error() {
   Test::new()
     .justfile("foo:")
     .arg("foo::baz")
-    .stderr("error: Expected submodule at `foo` but found recipe.\n")
-    .status(1)
-    .run();
+    .stderr("error: expected submodule at `foo` but found recipe\n")
+    .failure();
 }
 
 #[test]
@@ -768,9 +1543,8 @@ fn expected_submodule_but_found_recipe_in_submodule_error() {
     .justfile("mod foo")
     .write("foo.just", "bar:")
     .args(["foo::bar::baz"])
-    .stderr("error: Expected submodule at `foo::bar` but found recipe.\n")
-    .status(1)
-    .run();
+    .stderr("error: expected submodule at `foo::bar` but found recipe\n")
+    .failure();
 }
 
 #[test]
@@ -778,15 +1552,20 @@ fn colon_separated_path_components_are_not_used_as_arguments() {
   Test::new()
     .justfile("foo bar:")
     .args(["foo::bar"])
-    .stderr("error: Expected submodule at `foo` but found recipe.\n")
-    .status(1)
-    .run();
+    .stderr("error: expected submodule at `foo` but found recipe\n")
+    .failure();
 }
 
 #[test]
 fn comments_can_follow_modules() {
   Test::new()
-    .write("foo.just", "foo:\n @echo FOO")
+    .write(
+      "foo.just",
+      "
+        foo:
+         @echo FOO
+      ",
+    )
     .justfile(
       "
         mod foo # this is foo
@@ -794,7 +1573,7 @@ fn comments_can_follow_modules() {
     )
     .args(["foo", "foo"])
     .stdout("FOO\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -807,10 +1586,9 @@ fn doc_comment_on_module() {
         mod foo
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .stdout("Available recipes:\n    foo ... # Comment\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -818,16 +1596,54 @@ fn doc_attribute_on_module() {
   Test::new()
     .write("foo.just", "")
     .justfile(
-      r#"
+      "
         # Suppressed comment
-        [doc: "Comment"]
+        [doc: 'Comment']
         mod foo
-      "#,
+      ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .stdout("Available recipes:\n    foo ... # Comment\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn doc_attribute_on_module_may_be_expression() {
+  Test::new()
+    .write("foo.just", "")
+    .justfile(
+      "
+        prefix := 'hello '
+        [doc(prefix + 'world')]
+        mod foo
+      ",
+    )
+    .arg("--list")
+    .stdout("Available recipes:\n    foo ... # hello world\n")
+    .success();
+}
+
+#[test]
+fn variables_in_doc_attributes_are_resolved() {
+  Test::new()
+    .write("foo.just", "")
+    .justfile(
+      "
+        [doc(bar)]
+        mod foo
+      ",
+    )
+    .arg("--list")
+    .stderr(
+      "
+        error: variable `bar` not defined
+         ——▶ justfile:1:6
+          │
+        1 │ [doc(bar)]
+          │      ^^^
+      ",
+    )
+    .failure();
 }
 
 #[test]
@@ -837,7 +1653,7 @@ fn group_attribute_on_module() {
     .write("bar.just", "")
     .write("zee.just", "")
     .justfile(
-      r"
+      "
         [group('alpha')]
         mod zee
 
@@ -856,7 +1672,6 @@ fn group_attribute_on_module() {
         c:
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .stdout(
       "
@@ -873,7 +1688,7 @@ fn group_attribute_on_module() {
             bar ...
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -883,7 +1698,7 @@ fn group_attribute_on_module_unsorted() {
     .write("bar.just", "")
     .write("zee.just", "")
     .justfile(
-      r"
+      "
         [group('alpha')]
         mod zee
 
@@ -902,7 +1717,6 @@ fn group_attribute_on_module_unsorted() {
         c:
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .arg("--unsorted")
     .stdout(
@@ -920,7 +1734,7 @@ fn group_attribute_on_module_unsorted() {
             bar ...
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -930,7 +1744,7 @@ fn group_attribute_on_module_list_submodule() {
     .write("bar.just", "e:")
     .write("zee.just", "f:")
     .justfile(
-      r"
+      "
         [group('alpha')]
         mod zee
 
@@ -949,7 +1763,6 @@ fn group_attribute_on_module_list_submodule() {
         c:
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .arg("--list-submodules")
     .stdout(
@@ -970,7 +1783,7 @@ fn group_attribute_on_module_list_submodule() {
                 e
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -980,7 +1793,7 @@ fn group_attribute_on_module_list_submodule_unsorted() {
     .write("bar.just", "e:")
     .write("zee.just", "f:")
     .justfile(
-      r"
+      "
         [group('alpha')]
         mod zee
 
@@ -999,7 +1812,6 @@ fn group_attribute_on_module_list_submodule_unsorted() {
         c:
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .arg("--list-submodules")
     .arg("--unsorted")
@@ -1021,7 +1833,7 @@ fn group_attribute_on_module_list_submodule_unsorted() {
                 e
       ",
     )
-    .run();
+    .success();
 }
 
 #[test]
@@ -1029,16 +1841,14 @@ fn bad_module_attribute_fails() {
   Test::new()
     .write("foo.just", "")
     .justfile(
-      r"
+      "
         [no-cd]
         mod foo
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
-    .stderr("error: Module `foo` has invalid attribute `no-cd`\n ——▶ justfile:2:5\n  │\n2 │ mod foo\n  │     ^^^\n")
-    .status(EXIT_FAILURE)
-    .run();
+    .stderr("error: module `foo` has invalid attribute `no-cd`\n ——▶ justfile:2:5\n  │\n2 │ mod foo\n  │     ^^^\n")
+    .failure();
 }
 
 #[test]
@@ -1052,10 +1862,9 @@ fn empty_doc_attribute_on_module() {
         mod foo
       ",
     )
-    .test_round_trip(false)
     .arg("--list")
     .stdout("Available recipes:\n    foo ...\n")
-    .run();
+    .success();
 }
 
 #[test]
@@ -1072,16 +1881,21 @@ fn overrides_work_when_submodule_is_present() {
           @echo {{ x }}
       ",
     )
-    .test_round_trip(false)
     .arg("x=b")
     .stdout("b\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn exported_variables_are_available_in_submodules() {
   Test::new()
-    .write("foo.just", "bar:\n @echo $x")
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo $x
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -1089,16 +1903,22 @@ fn exported_variables_are_available_in_submodules() {
         export x := 'a'
       ",
     )
-    .test_round_trip(false)
     .arg("foo::bar")
     .stdout("a\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn exported_variables_can_be_unexported_in_submodules() {
   Test::new()
-    .write("foo.just", "unexport x\nbar:\n @echo ${x:-default}")
+    .write(
+      "foo.just",
+      "
+        unexport x
+        bar:
+         @echo ${x:-default}
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -1106,16 +1926,22 @@ fn exported_variables_can_be_unexported_in_submodules() {
         export x := 'a'
       ",
     )
-    .test_round_trip(false)
     .arg("foo::bar")
     .stdout("default\n")
-    .run();
+    .success();
 }
 
 #[test]
 fn exported_variables_can_be_overridden_in_submodules() {
   Test::new()
-    .write("foo.just", "export x := 'b'\nbar:\n @echo $x")
+    .write(
+      "foo.just",
+      "
+        export x := 'b'
+        bar:
+         @echo $x
+      ",
+    )
     .justfile(
       "
         mod foo
@@ -1123,8 +1949,163 @@ fn exported_variables_can_be_overridden_in_submodules() {
         export x := 'a'
       ",
     )
-    .test_round_trip(false)
     .arg("foo::bar")
     .stdout("b\n")
-    .run();
+    .success();
+}
+
+#[test]
+fn verbose_message_includes_module_path() {
+  Test::new()
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo BAR
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .args(["--verbose", "foo::bar"])
+    .stderr("===> running recipe `foo::bar`...\necho BAR\n")
+    .stdout("BAR\n")
+    .success();
+}
+
+#[test]
+fn trailing_separator_runs_default_recipe() {
+  Test::new()
+    .write(
+      "foo.just",
+      "
+        @bar:
+         echo FOO
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .arg("foo::")
+    .stdout("FOO\n")
+    .success();
+}
+
+#[test]
+fn nested_trailing_separator_runs_default_recipe() {
+  Test::new()
+    .write("foo.just", "mod bar")
+    .write(
+      "bar.just",
+      "
+        @baz:
+         echo BAZ
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .arg("foo::bar::")
+    .stdout("BAZ\n")
+    .success();
+}
+
+#[test]
+fn trailing_separator_no_default_recipe() {
+  Test::new()
+    .write("foo.just", "import 'bar.just'")
+    .write(
+      "bar.just",
+      "
+        bar:
+         @echo BAR
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .arg("foo::")
+    .stderr("error: justfile contains no default recipe\n")
+    .failure();
+}
+
+#[test]
+fn trailing_separator_not_last_argument() {
+  Test::new()
+    .write(
+      "foo.just",
+      "
+        bar:
+         @echo BAR
+      ",
+    )
+    .justfile(
+      "
+        mod foo
+      ",
+    )
+    .args(["foo::", "bar"])
+    .stderr("error: justfile does not contain recipe `foo::`\n")
+    .failure();
+}
+
+#[test]
+fn submodule_assignments_are_not_shadowed_by_parent_variables() {
+  Test::new()
+    .justfile(
+      "
+        x := 'parent'
+
+        mod sub
+      ",
+    )
+    .write(
+      "sub.just",
+      "
+        a := x
+        x := 'sub'
+
+        foo:
+            @echo {{ a }} {{ x }}
+      ",
+    )
+    .arg("sub::foo")
+    .stdout("sub sub\n")
+    .success();
+}
+
+#[test]
+fn submodule_function_bodies_are_not_shadowed_by_parent_variables() {
+  Test::new()
+    .justfile(
+      "
+        x := 'parent'
+
+        mod sub
+      ",
+    )
+    .write(
+      "sub.just",
+      "
+        set unstable
+
+        a := f()
+        f() := x
+        x := 'sub'
+
+        foo:
+            @echo {{ a }} {{ f() }}
+      ",
+    )
+    .arg("sub::foo")
+    .stdout("sub sub\n")
+    .success();
 }
